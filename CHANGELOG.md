@@ -2,6 +2,20 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [0.4.1] - 2026-06-29 — Security review fixes
+
+### Security
+- **The fail-closed secret scan now actually fails closed.** It previously ran *after* scrubbing, so a secret in a title/heading/summary was silently redacted instead of blocking the build. It now scans the **un-scrubbed** projections before serialization and blocks (the post-scrub residual is kept as a defense-in-depth gap detector). A secret in a heading now stops the build.
+- **Embedded mode is fail-closed.** The postMessage bridge now requires a non-empty `window.__KC_ALLOWED_ORIGINS` allowlist (the bridge is disabled if it is empty), only accepts messages from the embedding parent frame, and never broadcasts readiness to `"*"`.
+
+### Added
+- `test/security-fixtures.mjs` — pure-Node regression tests (secret block, ignore rules, XSS escaping, embed fail-closed). Run `node test/security-fixtures.mjs`.
+- `.github/workflows/ci.yml` — runs the fixtures + `npm audit` on every PR.
+- Root `package-lock.json` for reproducible `npx` / `npm ci` installs.
+
+### Changed
+- README: removed a "zero data risk" line that contradicted PRIVACY.md.
+
 ## [0.4.0] - 2026-06-29 — File Connections + churn (code-intel)
 
 ### Added

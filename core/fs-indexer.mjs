@@ -143,6 +143,20 @@ if (!NO_CHURN) {
   }
 }
 
+// --- fail-closed secret scan on RAW projections, BEFORE scrubbing (the decisive boundary).
+// Scans exactly the text that will be emitted (title/summary/headings/tags + relative path) in
+// its un-scrubbed form, so detection cannot be defeated by serializeNode()'s scrub. ---
+const _NL = String.fromCharCode(10);
+const rawText = raw.map(n => [
+  n.title, n.summary,
+  (n.headings || []).join(_NL),
+  (n.tags || []).join(' '),
+  n.provenance && n.provenance.ref,
+].filter(Boolean).join(_NL)).join(_NL);
+const preHits = findSecrets(rawText);
+const preTotal = preHits.reduce((a, h) => a + h[1], 0);
+const preList = preHits.map(h => h[0] + ':' + h[1]).join(', ');
+
 const nodes = raw.map(serializeNode);
 const catIds = [...new Set(nodes.map(n => n.category))].sort();
 const categories = deriveCategories(catIds);
@@ -170,21 +184,25 @@ console.log('post-scrub leak hits (emails/keys, should be ~0):', leakHits);
 console.log('redacted-path files skipped:', redactedPaths);
 if (flags.length) console.log('flags:', flags.join('; '));
 
-// --- fail-closed safe-share audit on the FINAL emitted projections (defense in depth) ---
-const secretHits = findSecrets(blob);
-const totalSecrets = secretHits.reduce((a, h) => a + h[1], 0);
-const secretList = secretHits.map(h => h[0] + ':' + h[1]).join(', ');
+// --- fail-closed safe-share audit.
+// PRIMARY   = pre-scrub detection (preTotal, computed above) -> the real boundary.
+// SECONDARY = post-scrub residual on the emitted artifact -> flags scrub gaps (defense in depth). ---
+const residualHits = findSecrets(blob);
+const residualTotal = residualHits.reduce((a, h) => a + h[1], 0);
+const residualList = residualHits.map(h => h[0] + ':' + h[1]).join(', ');
 if (SHARE_SAFE) {
   console.log('');
   console.log('KnoSky safety report');
   console.log('- Files scanned:', scanned);
   console.log('- Files skipped (redact-path):', redactedPaths);
-  console.log('- Secrets found:', totalSecrets, totalSecrets ? '[' + secretList + ']' : '');
+  console.log('- Secrets found (pre-scrub):', preTotal, preTotal ? '[' + preList + ']' : '');
+  console.log('- Residual after scrub (should be 0):', residualTotal, residualTotal ? '[' + residualList + ']' : '');
   console.log('- Absolute path in output:', INCLUDE_ABS ? 'INCLUDED' : 'removed (basename only)');
-  console.log('- Risk level:', totalSecrets ? 'HIGH' : 'Low');
+  console.log('- Risk level:', (preTotal || residualTotal) ? 'HIGH' : 'Low');
 }
-if (totalSecrets && !ALLOW_LEAKS) {
-  console.error('BLOCKED: ' + totalSecrets + ' secret-like value(s) in the index [' + secretList + ']. Nothing written.');
+if ((preTotal || residualTotal) && !ALLOW_LEAKS) {
+  const why = preTotal ? preList : residualList;
+  console.error('BLOCKED: ' + (preTotal || residualTotal) + ' secret-like value(s) detected [' + why + ']. Nothing written.');
   console.error('Add the offending paths to .kcignore or pass --redact <term>, then rebuild. Override with --allow-leaks (not recommended).');
   process.exit(1);
 }

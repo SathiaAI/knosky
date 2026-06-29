@@ -21,7 +21,7 @@ Your project grows faster than anyone can hold in their head. Hundreds of files,
 - **See your whole project in one screen.** Instead of scrolling a file tree, you see the *shape* of everything — which areas are big, how they connect, where the gaps are. New collaborators get oriented in minutes, not weeks.
 - **Find anything in seconds.** Search the city — or ask your assistant *"where does auth live / what did we decide about billing"* — and jump straight to the **live file**.
 - **Your AI answers from YOUR source, with citations.** Connect it to Claude / Cursor / VS Code / Gemini and your assistant stops guessing about your codebase — it cites the real file, every time.
-- **Zero setup tax, zero data risk.** Point it at a folder → a city in under a minute. Deterministic, **$0 tokens** to keep fresh, and **nothing ever leaves your machine.**
+- **Zero setup tax, local-first by default.** Point it at a folder → a city in under a minute. Deterministic, **$0 tokens** to keep fresh, **nothing ever leaves your machine**, and a fail-closed secret scan before you share. (KnoSky does not claim "zero data risk" — see [PRIVACY.md](./PRIVACY.md).)
 
 **Net:** faster comprehension, reliable recall of your own knowledge, and a grounded AI — without giving up privacy or paying a cent.
 

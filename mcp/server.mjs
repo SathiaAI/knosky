@@ -9,7 +9,7 @@ const CITY = process.env.KC_CITY || process.argv[2];
 if (!CITY) { console.error("Knowledge City MCP: set KC_CITY (or pass a path) to a city-data.v2.json"); process.exit(1); }
 const ctx = load(CITY);
 
-const server = new McpServer({ name: "knowledge-city", version: "0.4.0" });
+const server = new McpServer({ name: "knowledge-city", version: "0.4.1" });
 
 server.registerTool("kc_search", {
   title: "Search the Knowledge City",

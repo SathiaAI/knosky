@@ -690,20 +690,25 @@
 
   // ---------- host bridge over postMessage (embedded mode ONLY; OFF in the standalone gift) ----------
   if(window.__KC_EMBED__){
-    var KC_OK=window.__KC_ALLOWED_ORIGINS||[];
-    window.addEventListener('message',function(ev){
-      if(KC_OK.length&&KC_OK.indexOf(ev.origin)===-1)return;   // origin allowlist
-      var d=ev&&ev.data;if(!d||typeof d!=='object')return;
-      if(d.type==='kc:data'){ingest(d.payload);return;}
-      if(d.type==='kc:refit'){resize();if(typeof fitAll==='function'){fitAll();cam.x=cam.tx;cam.y=cam.ty;cam.zoom=cam.tz;}return;}
-      if(d.type==='kc:focus'&&d.id!=null){var id=String(d.id);if(byId[id]){selectBuilding(id);}}
-    });
+    var KC_OK=(Array.isArray(window.__KC_ALLOWED_ORIGINS)?window.__KC_ALLOWED_ORIGINS:[]).filter(Boolean);
+    if(!KC_OK.length){
+      console.warn('KnoSky embed disabled: window.__KC_ALLOWED_ORIGINS is empty. Set at least one allowed origin to enable the postMessage bridge.');
+    }else{
+      window.addEventListener('message',function(ev){
+        if(KC_OK.indexOf(ev.origin)===-1)return;   // origin allowlist (REQUIRED, fail-closed)
+        if(ev.source!==window.parent)return;       // only accept from the embedding parent
+        var d=ev&&ev.data;if(!d||typeof d!=='object')return;
+        if(d.type==='kc:data'){ingest(d.payload);return;}
+        if(d.type==='kc:refit'){resize();if(typeof fitAll==='function'){fitAll();cam.x=cam.tx;cam.y=cam.ty;cam.zoom=cam.tz;}return;}
+        if(d.type==='kc:focus'&&d.id!=null){var id=String(d.id);if(byId[id]){selectBuilding(id);}}
+      });
+    }
   }
   if(window.__KC_KENNEY__)loadKenney();
   // Standalone (local product): render immediately from injected page data.
   try{ if(window.__KC_DATA__&&typeof window.__KC_DATA__==='object'&&Array.isArray(window.__KC_DATA__.nodes)) ingest(window.__KC_DATA__); }catch(e){}
   // Announce readiness to an authenticated parent (embedded mode only, no wildcard broadcast in standalone).
-  if(window.__KC_EMBED__){try{window.parent&&window.parent.postMessage({type:"kc:ready"},(window.__KC_ALLOWED_ORIGINS&&window.__KC_ALLOWED_ORIGINS[0])||"*");}catch(e){}}
+  if(window.__KC_EMBED__){var KC_RDY=(Array.isArray(window.__KC_ALLOWED_ORIGINS)?window.__KC_ALLOWED_ORIGINS:[]).filter(Boolean);if(KC_RDY.length){try{window.parent&&window.parent.postMessage({type:"kc:ready"},KC_RDY[0]);}catch(e){}}}
 })();
 </script>
 </body>

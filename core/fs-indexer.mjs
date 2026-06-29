@@ -4,12 +4,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { SCHEMA_VERSION, IGNORE_DEFAULTS, deriveCategories, serializeNode, validateCity, setRedactTerms } from './contract.mjs';
+import { SCHEMA_VERSION, IGNORE_DEFAULTS, deriveCategories, serializeNode, validateCity, setRedactTerms, findSecrets } from './contract.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1]] : []).filter(Boolean));
 const ROOT = args.root && path.resolve(args.root);
 const OUT = args.out || null;
 const MAX = parseInt(args.max || '6000', 10);
+const SHARE_SAFE = process.argv.includes('--share-safe');
+const INCLUDE_ABS = process.argv.includes('--include-absolute-root');
+const ALLOW_LEAKS = process.argv.includes('--allow-leaks');
 if (!ROOT || !fs.existsSync(ROOT)) { console.log('usage: node fs-indexer.mjs --root <dir> [--out <file>] [--max N] [--redact a,b]'); process.exit(1); }
 const REDACT = (args.redact || '').split(',').map(s => s.trim()).filter(Boolean);
 if (REDACT.length) setRedactTerms(REDACT);
@@ -112,7 +115,7 @@ const categories = deriveCategories(catIds);
 const city = {
   schema_version: SCHEMA_VERSION,
   generated_at: new Date().toISOString(),
-  source: { kind: 'fs', ref: ROOT, rev: REV },
+  source: { kind: 'fs', ref: INCLUDE_ABS ? ROOT : path.basename(ROOT), rev: REV },
   categories, node_count: nodes.length, nodes,
 };
 
@@ -124,7 +127,7 @@ const blob = JSON.stringify(nodes);
 const leakHits = (blob.match(/\b(AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)\b/g) || []).length
   + (blob.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).length;
 
-console.log('--- fs index:', ROOT, '---');
+console.log('--- fs index:', INCLUDE_ABS ? ROOT : path.basename(ROOT), '---');
 console.log('rev', REV, '| scanned files:', scanned, '| nodes:', nodes.length, '| categories:', catIds.length);
 console.log('byKind:', JSON.stringify(nodes.reduce((a, n) => (a[n.kind] = (a[n.kind] || 0) + 1, a), {})));
 console.log('top categories:', Object.entries(dist).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k}:${v}`).join(', '));
@@ -132,4 +135,23 @@ console.log('VALID:', res.ok, res.ok ? '' : '\n - ' + res.errors.slice(0, 8).joi
 console.log('post-scrub leak hits (emails/keys, should be ~0):', leakHits);
 console.log('redacted-path files skipped:', redactedPaths);
 if (flags.length) console.log('flags:', flags.join('; '));
+
+// --- fail-closed safe-share audit on the FINAL emitted projections (defense in depth) ---
+const secretHits = findSecrets(blob);
+const totalSecrets = secretHits.reduce((a, h) => a + h[1], 0);
+const secretList = secretHits.map(h => h[0] + ':' + h[1]).join(', ');
+if (SHARE_SAFE) {
+  console.log('');
+  console.log('KnoSky safety report');
+  console.log('- Files scanned:', scanned);
+  console.log('- Files skipped (redact-path):', redactedPaths);
+  console.log('- Secrets found:', totalSecrets, totalSecrets ? '[' + secretList + ']' : '');
+  console.log('- Absolute path in output:', INCLUDE_ABS ? 'INCLUDED' : 'removed (basename only)');
+  console.log('- Risk level:', totalSecrets ? 'HIGH' : 'Low');
+}
+if (totalSecrets && !ALLOW_LEAKS) {
+  console.error('BLOCKED: ' + totalSecrets + ' secret-like value(s) in the index [' + secretList + ']. Nothing written.');
+  console.error('Add the offending paths to .kcignore or pass --redact <term>, then rebuild. Override with --allow-leaks (not recommended).');
+  process.exit(1);
+}
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(city, null, 2) + '\n'); console.log('wrote', OUT); }

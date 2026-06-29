@@ -14,12 +14,32 @@ export const PROVENANCE_REQUIRED = ['store', 'ref'];
 export const CATEGORY_REQUIRED = ['id', 'label', 'order'];
 export const SUMMARY_MAX = 200;
 
-// Best-effort secret/PII denylist applied to emitted text projections. NOT a security boundary (council).
+// Detection patterns for the fail-closed safe-share audit (broader than the scrub list below).
+export const SECRET_PATTERNS = [
+  [/AKIA[0-9A-Z]{16}/g, 'aws-access-key'],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----/g, 'private-key'],
+  [/\bgh[posru]_[A-Za-z0-9]{20,}\b/g, 'github-token'],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, 'github-pat'],
+  [/\bsk-[A-Za-z0-9]{20,}\b/g, 'openai-key'],
+  [/\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/g, 'stripe-key'],
+  [/\bAIza[0-9A-Za-z_\-]{35}\b/g, 'google-api-key'],
+  [/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, 'slack-token'],
+  [/\bglpat-[A-Za-z0-9_\-]{20,}\b/g, 'gitlab-pat'],
+  [/\bnpm_[A-Za-z0-9]{36}\b/g, 'npm-token'],
+  [/\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b/g, 'jwt'],
+];
+export function findSecrets(text) {
+  const s = String(text); const hits = [];
+  for (const [re, kind] of SECRET_PATTERNS) { const m = s.match(re); if (m && m.length) hits.push([kind, m.length]); }
+  return hits;
+}
+
+// Best-effort secret/PII denylist applied to emitted text projections. Backed by the indexer's
+// fail-closed findSecrets() audit on the final artifact (defense in depth, not a single boundary).
 const DENY = [
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,                 // emails
   /\b(?:api[_-]?key|secret|token|password|passwd|bearer)\b\s*[:=]\s*\S+/gi,
-  /AKIA[0-9A-Z]{16}/g,                                               // aws access key id
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/g,
+  ...SECRET_PATTERNS.map(([re]) => re),
 ];
 // Optional project-specific sensitive terms (e.g. an employer/customer name) → redacted too.
 let EXTRA_TERMS = [];

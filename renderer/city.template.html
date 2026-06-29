@@ -108,7 +108,8 @@
 </style>
 </head>
 <body>
-<script>window.__KC_DATA__ = __CITY_DATA__;</script>
+<script id="kc-data" type="application/json">__CITY_DATA__</script>
+<script>try{window.__KC_DATA__=JSON.parse(document.getElementById('kc-data').textContent);}catch(e){window.__KC_DATA__=null;}</script>
 <canvas id="city"></canvas>
 <div id="boot">Building the city…</div>
 <header></header>
@@ -596,13 +597,14 @@
 
   function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function cssesc(s){return (window.CSS&&CSS.escape)?CSS.escape(s):s.replace(/[^a-zA-Z0-9_-]/g,'\\$&');}
-  function buildChips(){const el=document.getElementById('dchips');el.innerHTML=DKEYS.map(k=>`<span class="dchip" data-k="${k}"><span class="sw" style="background:${DCFG[k].color}"></span>${DCFG[k].name}</span>`).join('');
+  function okColor(c){return /^#[0-9a-fA-F]{6}$/.test(String(c))?c:'#7c83a3';}
+  function buildChips(){const el=document.getElementById('dchips');el.innerHTML=DKEYS.map(k=>`<span class="dchip" data-k="${esc(k)}"><span class="sw" style="background:${okColor(DCFG[k].color)}"></span>${esc(DCFG[k].name)}</span>`).join('');
     el.querySelectorAll('.dchip').forEach(c=>c.addEventListener('click',()=>toggleDistrict(c.dataset.k)));}
   const NAV_HDR='<div class="navhdr"><span class="nttl">Districts</span><div class="nx"><span class="nb" id="navLock" title="Lock open"></span><span class="nb" id="navHide" title="Hide sidebar">«</span></div></div>';
   function buildNav(){const el=document.getElementById('navList');
     el.innerHTML=DKEYS.map(k=>{const ns=NODES.filter(n=>n.d===k).slice().sort((a,b)=>(b.versions[0].date||'').localeCompare(a.versions[0].date||''));
       const rows=ns.map(n=>`<div class="brow" data-id="${esc(n.id)}"><span class="bt">${esc(n.t)}</span><span class="bv mono">${n.kind==='decision'?esc(n.id.slice(9)):'spec'}</span></div>`).join('');
-      return `<div class="acc" data-k="${k}"><div class="ah"><span class="tag" style="background:${DCFG[k].color}"></span><span class="nm" style="color:${DCFG[k].color}">${DCFG[k].name}</span><span class="ct" data-ct="${k}">${ns.length}</span><span class="caret">▶</span></div><div class="blist">${rows}</div></div>`;}).join('');
+      return `<div class="acc" data-k="${esc(k)}"><div class="ah"><span class="tag" style="background:${okColor(DCFG[k].color)}"></span><span class="nm" style="color:${okColor(DCFG[k].color)}">${esc(DCFG[k].name)}</span><span class="ct" data-ct="${esc(k)}">${ns.length}</span><span class="caret">▶</span></div><div class="blist">${rows}</div></div>`;}).join('');
     el.querySelectorAll('.acc').forEach(acc=>{const k=acc.dataset.k;acc.querySelector('.ah').addEventListener('click',()=>toggleDistrict(k));
       acc.querySelectorAll('.brow').forEach(r=>r.addEventListener('click',()=>selectBuilding(r.dataset.id)));});
     setupNavControls();}
@@ -631,13 +633,13 @@
     const w=isoToWorld(n.gx,n.gy);focusWorld(w.x,w.y-20,Math.max(cam.tz,1.05));renderPane(n);document.getElementById('pane').classList.add('open');}
   function renderPane(n){const D=DCFG[n.d];document.getElementById('pbar').style.background=D.color;
     const pid=document.getElementById('pid');pid.textContent=n.id;pid.style.color=D.color;
-    document.getElementById('ptitle').textContent=n.t;document.getElementById('pdist').innerHTML=`<span style="color:${D.color}">${D.name}</span> · ${n.kind}`;
+    document.getElementById('ptitle').textContent=n.t;document.getElementById('pdist').innerHTML=`<span style="color:${okColor(D.color)}">${esc(D.name)}</span> · ${esc(n.kind)}`;
     const stColor={locked:'#69cf94',active:'#e0b24a',superseded:'#9aa0b4'}[n.status]||'#9aa0b4';
     const verHtml=n.versions.map((v,i)=>{const cur=i===0;return `<div class="vrow ${cur?'cur':''}"><div class="vtop"><span class="vv mono">${esc(v.v||'—')}</span><span class="vd mono">${esc(v.date||'')}</span>${cur?'<span class="vbadge">latest</span>':'<span class="vcaret">▶</span>'}</div>${v.note?`<div class="vnote">${esc(v.note)}</div>`:''}</div>`;}).join('');
     let relHtml='<span class="empty">No connections in-index.</span>';
     if(n.links.length){const byD={};n.links.forEach(id=>{const m=byId[id];if(!m)return;(byD[m.d]=byD[m.d]||[]).push(m);});const areas=Object.keys(byD).map(k=>DCFG[k].name);
-      relHtml=`<div style="font-size:11.5px;color:var(--dim);margin-bottom:10px">${n.links.length} link${n.links.length>1?'s':''} across <b style="color:var(--ink)">${areas.length}</b> area${areas.length>1?'s':''}: ${areas.join(', ')}</div>`+
-        Object.keys(byD).map(k=>`<div class="relgrp"><div class="rlabel" style="color:${DCFG[k].color}">${DCFG[k].name}</div>`+byD[k].map(m=>`<span class="chip" data-go="${esc(m.id)}"><span class="cdot" style="background:${DCFG[m.d].color}"></span>${esc(m.t)}</span>`).join('')+`</div>`).join('');}
+      relHtml=`<div style="font-size:11.5px;color:var(--dim);margin-bottom:10px">${n.links.length} link${n.links.length>1?'s':''} across <b style="color:var(--ink)">${areas.length}</b> area${areas.length>1?'s':''}: ${areas.map(esc).join(', ')}</div>`+
+        Object.keys(byD).map(k=>`<div class="relgrp"><div class="rlabel" style="color:${okColor(DCFG[k].color)}">${esc(DCFG[k].name)}</div>`+byD[k].map(m=>`<span class="chip" data-go="${esc(m.id)}"><span class="cdot" style="background:${okColor(DCFG[m.d].color)}"></span>${esc(m.t)}</span>`).join('')+`</div>`).join('');}
     document.getElementById('pbody').innerHTML=
       `<div class="sec"><span class="pill" style="background:${stColor}22;color:${stColor};border:1px solid ${stColor}55">${esc(n.status||'—')}</span>${n.sensitive?' <span class="pill" style="background:#b4555522;color:#e08a8a;border:1px solid #b4555555">internal only</span>':''}</div>`+
       `<div class="sec"><h3>Summary</h3><div class="summary">${esc(n.s)}</div></div>`+
@@ -650,7 +652,7 @@
   function matches(n,q){if(!q)return true;const hay=(n.t+' '+n.id+' '+n.s+' '+n.d+' '+(n.status||'')).toLowerCase();return q.toLowerCase().split(/\s+/).every(t=>hay.includes(t));}
   function applySearch(q){filteredHidden=new Set();let shown=0;
     NODES.forEach(n=>{const ok=matches(n,q);if(!ok)filteredHidden.add(n.id);else shown++;const row=document.querySelector('.brow[data-id="'+cssesc(n.id)+'"]');if(row)row.dataset.hidden=ok?'0':'1';});
-    DKEYS.forEach(k=>{const ct=document.querySelector('.ct[data-ct="'+k+'"]');if(ct)ct.textContent=NODES.filter(n=>n.d===k&&!filteredHidden.has(n.id)).length;});
+    DKEYS.forEach(k=>{const ct=document.querySelector('.ct[data-ct="'+cssesc(k)+'"]');if(ct)ct.textContent=NODES.filter(n=>n.d===k&&!filteredHidden.has(n.id)).length;});
     document.getElementById('scount').textContent=q?shown+' / '+NODES.length:NODES.length+' buildings';}
   document.getElementById('q').addEventListener('input',e=>applySearch(e.target.value.trim()));
   let looping=false;
@@ -677,18 +679,22 @@
     boot();
   }
 
-  // ---------- host bridge over postMessage ----------
-  window.addEventListener('message',function(ev){
-    var d=ev&&ev.data;if(!d||typeof d!=='object')return;
-    if(d.type==='kc:data'){ingest(d.payload);return;}
-    if(d.type==='kc:refit'){resize();if(typeof fitAll==='function'){fitAll();cam.x=cam.tx;cam.y=cam.ty;cam.zoom=cam.tz;}return;}
-    if(d.type==='kc:focus'&&d.id!=null){var id=String(d.id);if(byId[id]){selectBuilding(id);}}
-  });
+  // ---------- host bridge over postMessage (embedded mode ONLY; OFF in the standalone gift) ----------
+  if(window.__KC_EMBED__){
+    var KC_OK=window.__KC_ALLOWED_ORIGINS||[];
+    window.addEventListener('message',function(ev){
+      if(KC_OK.length&&KC_OK.indexOf(ev.origin)===-1)return;   // origin allowlist
+      var d=ev&&ev.data;if(!d||typeof d!=='object')return;
+      if(d.type==='kc:data'){ingest(d.payload);return;}
+      if(d.type==='kc:refit'){resize();if(typeof fitAll==='function'){fitAll();cam.x=cam.tx;cam.y=cam.ty;cam.zoom=cam.tz;}return;}
+      if(d.type==='kc:focus'&&d.id!=null){var id=String(d.id);if(byId[id]){selectBuilding(id);}}
+    });
+  }
   if(window.__KC_KENNEY__)loadKenney();
   // Standalone (local product): render immediately from injected page data.
   try{ if(window.__KC_DATA__&&typeof window.__KC_DATA__==='object'&&Array.isArray(window.__KC_DATA__.nodes)) ingest(window.__KC_DATA__); }catch(e){}
-  // Announce readiness so an authenticated parent (plugin mode) can also send a payload.
-  try{window.parent&&window.parent.postMessage({type:"kc:ready"},"*");}catch(e){}
+  // Announce readiness to an authenticated parent (embedded mode only, no wildcard broadcast in standalone).
+  if(window.__KC_EMBED__){try{window.parent&&window.parent.postMessage({type:"kc:ready"},(window.__KC_ALLOWED_ORIGINS&&window.__KC_ALLOWED_ORIGINS[0])||"*");}catch(e){}}
 })();
 </script>
 </body>

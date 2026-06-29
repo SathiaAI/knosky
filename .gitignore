@@ -7,3 +7,6 @@ city.html
 city-data.json
 nimbus-city.json
 *.tmp
+
+# KnoSky CLI output dir
+.knosky/

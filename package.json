@@ -1,0 +1,44 @@
+{
+  "name": "knosky",
+  "version": "0.3.0",
+  "description": "Turn any repo or docs folder into an explorable city, plus a local MCP that grounds your AI in your own source with citations. Local-first, free, $0 tokens.",
+  "type": "module",
+  "bin": {
+    "knosky": "bin/knosky.mjs"
+  },
+  "files": [
+    "bin",
+    "core",
+    "renderer",
+    "mcp/server.mjs",
+    "README.md",
+    "LICENSE.md",
+    "SECURITY.md",
+    "PRIVACY.md",
+    "LIMITATIONS.md",
+    "CREDITS.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "keywords": [
+    "repo-map",
+    "codebase-visualization",
+    "mcp",
+    "ai",
+    "citations",
+    "local-first",
+    "developer-tools"
+  ],
+  "license": "SEE LICENSE IN LICENSE.md",
+  "homepage": "https://knosky.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SathiaAI/knosky.git"
+  }
+}

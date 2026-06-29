@@ -2,6 +2,12 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [0.3.0] - 2026-06-29 — One-command launcher (npx)
+
+### Added
+- `npx knosky [path]` one-command launcher: indexes the folder, builds and opens the city, prints the MCP config (Claude Code / Claude Desktop / Cursor / VS Code) and suggested first prompts, then starts the local MCP server. Flags: `--no-open`, `--no-serve`. Reuses the verified indexer/renderer/MCP and inherits fail-closed `--share-safe` safety.
+- Root `package.json` with a `knosky` bin and a `files` allowlist for publishing.
+
 ## [0.2.0] - 2026-06-29 — Security hardening + safe-share
 
 ### Security

@@ -32,6 +32,14 @@ Developers, founders, and architects sitting on a sprawling repo or knowledge ba
 
 ## How it works
 
+**Quickstart — one command:**
+```bash
+npx knosky .
+```
+Indexes the current folder, opens the city, prints the MCP config for your AI assistant (Claude Code / Claude Desktop / Cursor / VS Code) plus a few starter prompts, and starts the local connector. Flags: `--no-open`, `--no-serve`.
+
+Prefer to run from a clone, or want the pieces? Read on.
+
 **Requirements:** [Node.js](https://nodejs.org) 18+.
 
 **1. Build your city from a folder or repo**

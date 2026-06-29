@@ -36,10 +36,12 @@ Developers, founders, and architects sitting on a sprawling repo or knowledge ba
 
 **1. Build your city from a folder or repo**
 ```bash
-node core/fs-indexer.mjs --root /path/to/your/repo --out city-data.json
+node core/fs-indexer.mjs --root /path/to/your/repo --out city-data.json --share-safe
 node renderer/build-rich.mjs city-data.json city.html
 ```
-Open `city.html`. Every top-level folder is a **district**, every file a **building**, every building links to the real source. (Optional: `--redact AcmeCorp,SecretProject` masks project-specific terms.)
+Open `city.html`. Every top-level folder is a **district**, every file a **building**, every building links to the real source.
+
+**Flags:** `--share-safe` strips your absolute path (basename only) and prints a safety report — and the build **fails closed** if a secret-like value is detected. `--redact AcmeCorp,SecretProject` masks (and skips files matching) project-specific terms. `--include-absolute-root` keeps the full local path (private diagnostics only). `--allow-leaks` overrides the secret block (not recommended).
 
 **2. Connect it to your AI assistant (MCP)**
 ```bash
@@ -67,7 +69,11 @@ Then ask: *"search KnoSky for what we decided about authentication."* Read-only 
 ## Privacy & safety
 - Runs locally; your source never leaves your machine.
 - Indexes pointers + light projections (title, headings, ~200-char excerpt, tags) — **never full file bodies**.
-- Skips `.git`, `node_modules`, `secrets/`, `keys/`, `.env*`, plus your `.gitignore`/`.kcignore`, and redacts common secret patterns. (Best-effort — review before sharing any city publicly.)
+- Skips `.git`, `node_modules`, `secrets/`, `keys/`, `.env*`, plus your `.gitignore`/`.kcignore` (git's own ignore rules apply inside a repo).
+- Scrubs common secret/PII patterns and **fails the build closed** if a secret-like value is detected. Build with **`--share-safe`** for a safety report before sharing.
+- Generated cities embed your data as inert JSON and escape untrusted file/folder names — opening or sharing a city won't execute injected code.
+
+More: **[PRIVACY.md](./PRIVACY.md)** · **[LIMITATIONS.md](./LIMITATIONS.md)** · **[SECURITY.md](./SECURITY.md)** · **[CHANGELOG.md](./CHANGELOG.md)**
 
 ## License & credits
 Free to use under the **[Functional Source License (FSL-1.1-MIT)](./LICENSE.md)** — use it freely; you just can't repackage it as a competing product. Converts to MIT two years after each release. "KnoSky" is a trademark of the author.

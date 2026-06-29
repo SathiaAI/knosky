@@ -9,15 +9,15 @@ const CITY = process.env.KC_CITY || process.argv[2];
 if (!CITY) { console.error("Knowledge City MCP: set KC_CITY (or pass a path) to a city-data.v2.json"); process.exit(1); }
 const ctx = load(CITY);
 
-const server = new McpServer({ name: "knowledge-city", version: "0.1.0" });
+const server = new McpServer({ name: "knowledge-city", version: "0.2.0" });
 
 server.registerTool("kc_search", {
   title: "Search the Knowledge City",
   description: "Search the indexed knowledge base by keywords. Returns ranked items (title, summary, category) each with a provenance citation (source path + revision) that links back to the live file. Use for 'where does X live / what was decided about Y / how does this connect'. Navigation, not full-text code search.",
-  inputSchema: { query: z.string().describe("keywords"), limit: z.number().int().optional().describe("max results (default 10)"), category: z.string().optional().describe("restrict to one category id") },
+  inputSchema: { query: z.string().max(500).describe("keywords"), limit: z.number().int().min(1).max(50).optional().describe("max results (default 10, max 50)"), category: z.string().max(200).optional().describe("restrict to one category id") },
   annotations: { readOnlyHint: true, openWorldHint: false },
 }, async ({ query, limit, category }) => {
-  const hits = search(ctx, query, { limit: limit || 10, category: category || null });
+  const hits = search(ctx, String(query).slice(0, 500), { limit: Math.min(Math.max(1, limit || 10), 50), category: category ? String(category).slice(0, 200) : null });
   const text = hits.length
     ? hits.map(h => `- [${h.category}] ${h.title} — ${h.summary || ""}\n  source: ${h.provenance.ref} @ ${h.provenance.source_rev} (id: ${h.id})`).join("\n")
     : "No matches.";
@@ -27,7 +27,7 @@ server.registerTool("kc_search", {
 server.registerTool("kc_get_node", {
   title: "Get one item",
   description: "Fetch a single indexed item by id (title, summary, category, kind) with its provenance citation.",
-  inputSchema: { id: z.string().describe("node id, e.g. fs:src/index.ts") },
+  inputSchema: { id: z.string().max(400).describe("node id, e.g. fs:src/index.ts") },
   annotations: { readOnlyHint: true },
 }, async ({ id }) => {
   const n = getNode(ctx, id);
@@ -47,7 +47,7 @@ server.registerTool("kc_list_categories", {
 server.registerTool("kc_get_provenance", {
   title: "Get provenance (citation)",
   description: "Get the citation for an item: the live source ref + revision, plus its links to related items.",
-  inputSchema: { id: z.string() },
+  inputSchema: { id: z.string().max(400) },
   annotations: { readOnlyHint: true },
 }, async ({ id }) => {
   const p = getProvenance(ctx, id);

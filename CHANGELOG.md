@@ -1,0 +1,27 @@
+# Changelog
+
+All notable changes to KnoSky. Versions are git-tagged on this repo.
+
+## [0.2.0] - 2026-06-29 — Security hardening + safe-share
+
+### Security
+- **Generated artifacts hardened against injection.** City data is embedded as inert JSON (`<script type="application/json">`) and the builder escapes `<` and U+2028/U+2029, so a repo containing `</script>` can no longer execute code in a generated city.
+- **Untrusted names escaped.** District/category names, file titles, and kinds render through HTML escaping; colors are validated. A folder named `<img onerror=...>` renders as harmless text, not a live element.
+- **Fail-closed secret scanning.** Expanded patterns (GitHub, OpenAI, Stripe, Google, Slack, GitLab, npm, JWT, SSH, AWS, PEM). The build now **fails closed** if a secret-like value is detected (override with `--allow-leaks`).
+- **postMessage bridge gated.** Disabled in the standalone build; only active in embedded mode with an origin allowlist.
+
+### Added
+- `--share-safe` — strips the absolute root path (basename only) and prints a safety report.
+- `--include-absolute-root` — opt back in to the full local path for private diagnostics.
+- `SECURITY.md`, `PRIVACY.md`, `LIMITATIONS.md` — disclosure path + trust docs.
+
+### Changed
+- **Privacy default:** the generated index stores the folder **basename**, not the absolute path.
+- **Ignore accuracy:** inside a git repo, git's own ignore rules are applied (`git check-ignore`); the conservative parser remains the fallback for non-git folders.
+- **MCP input caps:** `kc_search` bounds query length and result count; ids are length-capped — avoids token burn and runaway output.
+- Committed a lockfile for reproducible MCP installs.
+
+## [0.1.0] - 2026-06-27 — Initial public release
+- Local-first repo/folder → explorable isometric city (Kenney CC0 art).
+- Local stdio MCP: `kc_search`, `kc_get_node`, `kc_list_categories`, `kc_get_provenance`.
+- Single-file, self-contained city HTML. FSL-1.1-MIT license.

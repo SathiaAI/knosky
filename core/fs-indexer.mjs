@@ -102,6 +102,19 @@ function walk(dir, depth) {
 
 walk(ROOT, 0);
 
+// Accurate ignore inside a git repo: let git decide (catches .gitignore patterns the conservative parser misses).
+try {
+  const NL = String.fromCharCode(10);
+  const rels = raw.map(n => n.provenance.ref);
+  if (rels.length) {
+    let ignoredOut = '';
+    try { ignoredOut = execSync('git check-ignore --stdin', { cwd: ROOT, input: rels.join(NL), encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }); }
+    catch (e) { ignoredOut = (e && e.stdout) ? String(e.stdout) : ''; }   // exit 1 (none ignored) / 128 (not a repo) -> empty
+    const gi = new Set(ignoredOut.split(NL).map(s => s.trim()).filter(Boolean));
+    if (gi.size) for (let i = raw.length - 1; i >= 0; i--) if (gi.has(raw[i].provenance.ref)) raw.splice(i, 1);
+  }
+} catch (e) { /* git unavailable: keep the conservative-parser result */ }
+
 // light edges: markdown relative links that resolve to an indexed node
 const byRel = new Map(raw.map(n => [n.provenance.ref, n]));
 for (const n of raw) {

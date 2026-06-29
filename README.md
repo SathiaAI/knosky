@@ -32,14 +32,13 @@ Developers, founders, and architects sitting on a sprawling repo or knowledge ba
 
 ## How it works
 
-**Quickstart:**
+**Quickstart — one command:**
 ```bash
-git clone https://github.com/SathiaAI/knosky && cd knosky && npm install
-node bin/knosky.mjs /path/to/your/repo
+npx knosky .
 ```
-Indexes the folder, opens the city, prints the MCP config for your AI assistant (Claude Code / Claude Desktop / Cursor / VS Code) plus a few starter prompts, and starts the local connector. Flags: `--no-open`, `--no-serve`.
+Indexes the current folder, opens the city, prints the MCP config for your AI assistant (Claude Code / Claude Desktop / Cursor / VS Code) plus a few starter prompts, and starts the local connector. Point it anywhere with `npx knosky /path/to/your/repo`. Flags: `--no-open`, `--no-serve`.
 
-*Coming to npm:* `npx knosky .` — the same thing in one command, no clone.
+Prefer a clone? `git clone https://github.com/SathiaAI/knosky && cd knosky && npm install && node bin/knosky.mjs .`
 
 Want the individual pieces instead? Read on.
 

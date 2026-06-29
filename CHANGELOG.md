@@ -2,6 +2,17 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [0.4.0] - 2026-06-29 — File Connections + churn (code-intel)
+
+### Added
+- **File Connections:** import/dependency edges drawn as roads between buildings — select a file to see what it imports and what imports it. Per-language import scan over a bounded prefix; specifiers are resolved to repo files and then discarded (file-to-file edges only).
+- **Churn heat:** recently-changed files glow on the map, from `git log` (per-file commit count only).
+- **MCP `kc_related`:** ask your assistant "what connects to this file?" — out-edges, in-edges, and churn, with citations.
+- Flags: `--no-graph`, `--no-churn` to omit either signal.
+
+### Notes
+- Strictly **file-level metadata** (decision D-155): no symbol names, no ASTs, no code bodies, no commit messages/diffs. KnoSky maps how files connect; it does not analyze your code.
+
 ## [0.3.0] - 2026-06-29 — One-command launcher (npx)
 
 ### Added

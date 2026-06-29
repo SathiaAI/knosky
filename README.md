@@ -67,7 +67,9 @@ Or add to your Claude Desktop / Cursor / VS Code MCP config:
   "env": { "KC_CITY": "/abs/path/city-data.json" }
 }
 ```
-Then ask: *"search KnoSky for what we decided about authentication."* Read-only tools exposed: `kc_search`, `kc_get_node`, `kc_list_categories`, `kc_get_provenance`.
+Then ask: *"search KnoSky for what we decided about authentication."* Read-only tools exposed: `kc_search`, `kc_get_node`, `kc_list_categories`, `kc_get_provenance`, `kc_related`.
+
+**See how your code connects.** Select a file in the city to see its **connections** (roads to the files it imports / that import it) and **churn** (recently-changed files glow). Or ask your assistant *"what connects to src/auth.js?"* — file-level structure only, not code analysis.
 
 ---
 

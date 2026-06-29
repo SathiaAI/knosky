@@ -51,3 +51,13 @@ export function getProvenance(ctx, id) {
   if (!n) return null;
   return { id, title: n.title, provenance: n.provenance, links: n.links || [] };
 }
+
+// related = file connections (D-155): out-edges (imports) + in-edges (imported-by) + churn signal. File-level only.
+export function getRelated(ctx, id) {
+  const n = ctx.byId.get(id);
+  if (!n) return null;
+  const ref = (m) => ({ id: m.id, title: m.title, source: m.provenance && m.provenance.ref });
+  const imports = (n.links || []).map(tid => ctx.byId.get(tid)).filter(Boolean).map(ref);
+  const importedBy = ctx.city.nodes.filter(m => (m.links || []).includes(id)).map(ref);
+  return { id, title: n.title, churn: n.churn || null, imports, importedBy };
+}

@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { SCHEMA_VERSION, IGNORE_DEFAULTS, deriveCategories, serializeNode, validateCity, setRedactTerms, findSecrets } from './contract.mjs';
+import { extractImportSpecifiers, resolveSpec } from './edges.mjs';
+import { gitChurn } from './churn.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1]] : []).filter(Boolean));
 const ROOT = args.root && path.resolve(args.root);
@@ -13,6 +15,8 @@ const MAX = parseInt(args.max || '6000', 10);
 const SHARE_SAFE = process.argv.includes('--share-safe');
 const INCLUDE_ABS = process.argv.includes('--include-absolute-root');
 const ALLOW_LEAKS = process.argv.includes('--allow-leaks');
+const NO_GRAPH = process.argv.includes('--no-graph');
+const NO_CHURN = process.argv.includes('--no-churn');
 if (!ROOT || !fs.existsSync(ROOT)) { console.log('usage: node fs-indexer.mjs --root <dir> [--out <file>] [--max N] [--redact a,b]'); process.exit(1); }
 const REDACT = (args.redact || '').split(',').map(s => s.trim()).filter(Boolean);
 if (REDACT.length) setRedactTerms(REDACT);
@@ -94,6 +98,7 @@ function walk(dir, depth) {
       tags: ext ? [ext.slice(1)] : [],
       headings,
       links: [],
+      importSpecs: (!NO_GRAPH && readable) ? extractImportSpecifiers(fp) : [],
       provenance: { store: 'fs', ref: rel, source_rev: REV, fetched_at: new Date().toISOString() },
       visibility: 'internal',
     });
@@ -115,11 +120,27 @@ try {
   }
 } catch (e) { /* git unavailable: keep the conservative-parser result */ }
 
-// light edges: markdown relative links that resolve to an indexed node
-const byRel = new Map(raw.map(n => [n.provenance.ref, n]));
-for (const n of raw) {
-  if (n.kind !== 'doc') continue;
-  // (edges intentionally minimal in v1 fs; reserved for Phase 2 — keep links=[] unless trivially resolvable)
+// File Connections (D-155): resolve import specifiers to indexed files; store ONLY file-to-file edges.
+const relSet = new Set(raw.map(n => n.provenance.ref));
+if (!NO_GRAPH) {
+  for (const n of raw) {
+    const targets = new Set();
+    for (const spec of (n.importSpecs || [])) {
+      const t = resolveSpec(n.provenance.ref, spec, relSet);
+      if (t) { const id = 'fs:' + t; if (id !== n.id) targets.add(id); }
+    }
+    n.links = [...targets];
+  }
+}
+for (const n of raw) delete n.importSpecs;   // discard specifiers; only the resolved file-to-file edge survives
+
+// Churn overlay (D-155): per-file commit count + last-commit ts only (no messages/diffs/authors/lines).
+if (!NO_CHURN) {
+  const ch = gitChurn(ROOT);
+  for (const n of raw) {
+    const c = ch.counts[n.provenance.ref] || 0;
+    if (c > 0) n.churn = { c, t: ch.last[n.provenance.ref] || 0, b: c >= 6 ? 3 : c >= 3 ? 2 : 1 };
+  }
 }
 
 const nodes = raw.map(serializeNode);

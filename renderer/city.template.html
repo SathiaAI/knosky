@@ -184,7 +184,7 @@
   function adapt(n){const versions=Array.isArray(n.versions)&&n.versions.length?n.versions:[{v:n.version||"1.0",date:n.fact_date||GD,note:n.status||""}];
     const dc=n.category||n.district;const d=DCFG[dc]?dc:(DKEYS[0]||"general");
     return {id:n.id,d,t:n.title||n.id,s:n.summary||"",kind:n.kind,status:n.status||"",
-      versions,prov:n.provenance||null,links:(n.links||[]),sensitive:!!n.sensitive};}
+      versions,prov:n.provenance||null,links:(n.links||[]),churn:n.churn||null,sensitive:!!n.sensitive};}
   // NODES/byId are (re)built by ingest() from the postMessage payload.
   let NODES=[];
   let byId={};
@@ -501,6 +501,15 @@
       ctx.fillStyle="rgba(255,233,166,.28)";ctx.beginPath();ctx.arc(B[0],B[1],7,0,7);ctx.fill();ctx.setLineDash([2,6]);});
     ctx.setLineDash([]);ctx.fillStyle="#fff2c4";ctx.beginPath();ctx.arc(A[0],A[1],4.5,0,7);ctx.fill();ctx.restore();}
 
+  // ---------- churn heat: ground glow under recently-changed files (D-155, file-level metadata only) ----------
+  function drawChurn(){
+    for(const n of NODES){ const ch=n.churn; if(!ch||!ch.b||ch.b<2||filteredHidden.has(n.id)) continue;
+      const col = ch.b>=3 ? 'rgba(242,104,63,' : 'rgba(232,178,74,';
+      ctx.fillStyle=col+'0.20)'; diamondPath(n.bx,n.by,TW*0.62,TH*0.62); ctx.fill();
+      ctx.fillStyle=col+'0.32)'; diamondPath(n.bx,n.by,TW*0.40,TH*0.40); ctx.fill();
+    }
+  }
+
   // ---------- cars (more realistic iso car) ----------
   const CARCOL=["#e85d54","#3f7fd0","#e8c44e","#43b07a","#d9dde4","#9a6cd0"];
   // Sprite columns: 0=up-left(-x)  1=up-right(-y)  2=down-right(+x)  3=down-left(+y). Each car faces its travel dir.
@@ -569,7 +578,7 @@
   function render(){NOW=performance.now()-T0;moveSky();ctx.setTransform(DPR,0,0,DPR,0,0);drawBackdrop();
     ctx.save();ctx.translate(cam.x,cam.y);ctx.scale(cam.zoom,cam.zoom);
     ctx.globalAlpha=Math.min(1,NOW/450);
-    drawIslandShadow();drawSlab();drawGround();drawCloudShadows();drawShadows();
+    drawIslandShadow();drawSlab();drawGround();drawCloudShadows();drawShadows();drawChurn();
     const list=OBJ.slice();drawCars(list);
     list.sort((a,b)=>(a.gx+a.gy)-(b.gx+b.gy)||a.gx-b.gx);
     for(const o of list){

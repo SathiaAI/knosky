@@ -7,7 +7,7 @@ export const SCHEMA_VERSION = '2.0';
 // The ONLY node fields that may ever be serialized into the index. Anything else is dropped/flagged.
 export const NODE_FIELD_ALLOWLIST = [
   'id', 'kind', 'title', 'summary', 'category', 'status',
-  'fact_date', 'tags', 'headings', 'links', 'provenance', 'visibility', 'sensitive',
+  'fact_date', 'tags', 'headings', 'links', 'churn', 'provenance', 'visibility', 'sensitive',
 ];
 export const NODE_REQUIRED = ['id', 'kind', 'title', 'category', 'links', 'provenance'];
 export const PROVENANCE_REQUIRED = ['store', 'ref'];

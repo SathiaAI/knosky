@@ -3,13 +3,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { load, search, getNode, listCategories, getProvenance } from "../core/retrieve.mjs";
+import { load, search, getNode, listCategories, getProvenance, getRelated } from "../core/retrieve.mjs";
 
 const CITY = process.env.KC_CITY || process.argv[2];
 if (!CITY) { console.error("Knowledge City MCP: set KC_CITY (or pass a path) to a city-data.v2.json"); process.exit(1); }
 const ctx = load(CITY);
 
-const server = new McpServer({ name: "knowledge-city", version: "0.2.0" });
+const server = new McpServer({ name: "knowledge-city", version: "0.4.0" });
 
 server.registerTool("kc_search", {
   title: "Search the Knowledge City",
@@ -52,6 +52,22 @@ server.registerTool("kc_get_provenance", {
 }, async ({ id }) => {
   const p = getProvenance(ctx, id);
   return { content: [{ type: "text", text: p ? JSON.stringify(p, null, 2) : `No item with id ${id}` }], structuredContent: p || {} };
+});
+
+server.registerTool("kc_related", {
+  title: "Related files (connections)",
+  description: "How a file connects to others in this project: which files it imports (out), which files import it (in), and its recent-change (churn) signal. File-level structure with citations, not code analysis.",
+  inputSchema: { id: z.string().max(400).describe("node id, e.g. fs:src/auth.js") },
+  annotations: { readOnlyHint: true },
+}, async ({ id }) => {
+  const r = getRelated(ctx, id);
+  if (!r) return { content: [{ type: "text", text: "No item with id " + id }], structuredContent: {} };
+  const NL = String.fromCharCode(10);
+  const lines = [r.title + " (" + id + ")"];
+  if (r.churn) lines.push("recent changes: " + r.churn.c + " commit(s), heat " + r.churn.b);
+  lines.push("imports (" + r.imports.length + "): " + (r.imports.map(x => x.source || x.id).join(", ") || "none"));
+  lines.push("imported by (" + r.importedBy.length + "): " + (r.importedBy.map(x => x.source || x.id).join(", ") || "none"));
+  return { content: [{ type: "text", text: lines.join(NL) }], structuredContent: r };
 });
 
 await server.connect(new StdioServerTransport());

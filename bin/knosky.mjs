@@ -18,6 +18,12 @@ const flags = new Set(argv.filter(a => a.startsWith('--')));
 const target = path.resolve(argv.find(a => !a.startsWith('--')) || '.');
 const NODE = process.execPath;
 
+// --verify-airgap: prove KnoSky makes zero network calls (no target needed).
+if (flags.has('--verify-airgap')) {
+  const v = spawnSync(NODE, [path.join(ROOT, 'test/verify-airgap.mjs')], { cwd: ROOT, stdio: 'inherit' });
+  process.exit(v.status == null ? 1 : v.status);
+}
+
 if (!fs.existsSync(target)) { console.error('KnoSky: path not found: ' + target); process.exit(1); }
 
 const outDir = path.join(target, '.knosky');

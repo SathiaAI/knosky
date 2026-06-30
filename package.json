@@ -11,6 +11,8 @@
     "core",
     "renderer",
     "mcp/server.mjs",
+    "test/airgap-shim.mjs",
+    "test/verify-airgap.mjs",
     "README.md",
     "LICENSE.md",
     "SECURITY.md",

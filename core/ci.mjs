@@ -23,11 +23,27 @@ function isSafePath(p) {
 // Git helper — returns changed file list or [] on any error (advisory, never throws)
 // ---------------------------------------------------------------------------
 
+// A conservative git-ref allowlist: SHAs, branch/tag names, and relative refs
+// (HEAD, HEAD~1, HEAD^). Must NOT start with '-' — that's the belt-and-suspenders
+// layer that stops a ref string looking like a CLI flag (e.g. "--output=...")
+// from ever being handed to git, even before --end-of-options runs.
+function isSafeGitRef(ref) {
+  if (!ref || typeof ref !== 'string') return false;
+  if (ref.length > 200) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._/\-~^:]*$/.test(ref);
+}
+
 function gitChangedFiles(root, base, head) {
+  // Refuse to shell out at all if either ref doesn't look like a ref (layer 1).
+  if (!isSafeGitRef(base) || !isSafeGitRef(head)) return [];
   try {
+    // --end-of-options (layer 2, git >= 2.24) tells git's option parser that
+    // everything after is a revision, never an option — closes the residual
+    // "ref value that happens to start with '-'" injection even though
+    // execFileSync's args-array already rules out shell injection.
     const output = execFileSync(
       'git',
-      ['-C', root, 'diff', '--name-only', base + '...' + head],
+      ['-C', root, 'diff', '--name-only', '--end-of-options', base + '...' + head],
       { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     return output.split('\n').map(l => l.trim()).filter(Boolean);

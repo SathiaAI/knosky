@@ -1,8 +1,8 @@
 // KnoSky bundle engine (KSV2-R4) — intent-manifest builder with fail-closed secret scan.
 // Pure Node stdlib + internal imports only. ESM. No new deps.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, realpathSync } from 'node:fs';
+import { join, relative, isAbsolute, sep } from 'node:path';
 import { findSecrets } from './contract.mjs';
 import { makeIntentManifest, validateIntentManifest } from './schema.mjs';
 
@@ -25,35 +25,54 @@ function isSafeRef(ref) {
 }
 
 /**
- * Compute the hex SHA-256 of a file. Returns "" on any error.
+ * Resolve `ref` under `root` and read it — following symlinks via realpathSync,
+ * then verifying the REAL resolved path still lands inside `root` before the
+ * file is ever opened. `isSafeRef` above only validates the path STRING; it
+ * cannot see that a same-named file on disk is actually a symlink pointing
+ * outside root. This is the actual read boundary (belt-and-suspenders on top
+ * of fs-indexer's own symlink exclusion at index time — this is a separate
+ * read path with its own live filesystem access, so it re-checks independently).
+ *
+ * Never throws. Distinguishes "nothing to scan by design" (no root given —
+ * the caller explicitly opted out of content access) from "root given but the
+ * file could not be verified safe/readable" (fail-closed: caller must treat
+ * this as unscannable, NEVER as clean).
+ *
+ * @param {string|undefined} root
+ * @param {string} ref
+ * @returns {{ buf: Buffer } | { noRoot: true } | { unsafe: true }}
+ */
+function safeRead(root, ref) {
+  if (!root) return { noRoot: true };
+  const full = join(root, ref);
+  let real, rootReal;
+  try {
+    real = realpathSync(full);
+    rootReal = realpathSync(root);
+  } catch {
+    return { unsafe: true }; // missing / broken symlink / permission error — cannot verify
+  }
+  const rel = relative(rootReal, real);
+  if (rel === sep || rel.startsWith('..' + sep) || rel === '..' || isAbsolute(rel)) {
+    return { unsafe: true }; // real path escapes root (symlink pointed outside) — refuse
+  }
+  try {
+    return { buf: readFileSync(real) };
+  } catch {
+    return { unsafe: true };
+  }
+}
+
+/**
+ * Compute the hex SHA-256 of a file. Returns "" when unreadable/unsafe/no-root.
  * @param {string|undefined} root   Repo root directory, or undefined.
  * @param {string}           ref    Repo-relative path.
  * @returns {string}
  */
 function sha256OfFile(root, ref) {
-  if (!root) return '';
-  try {
-    const fullPath = join(root, ref);
-    const buf = readFileSync(fullPath);
-    return createHash('sha256').update(buf).digest('hex');
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Read a file's text for secret scanning. Returns null on any error.
- * @param {string|undefined} root
- * @param {string}           ref
- * @returns {string|null}
- */
-function readText(root, ref) {
-  if (!root) return null;
-  try {
-    return readFileSync(join(root, ref), 'utf8');
-  } catch {
-    return null;
-  }
+  const r = safeRead(root, ref);
+  if (!r.buf) return '';
+  return createHash('sha256').update(r.buf).digest('hex');
 }
 
 // ---------------------------------------------------------------------------
@@ -109,22 +128,33 @@ export function kcBundle(ctx, ids, { root, expiry = null } = {}) {
     }
   }
 
-  // Secret scan — fail-closed: if any file is unreadable but has a hash, treat it as clean;
-  // if root is provided we try to read; otherwise there is nothing to scan → clean.
+  // Secret scan — FAIL-CLOSED. Three outcomes per included file:
+  //   noRoot  → caller opted out of content access entirely; nothing to scan by
+  //             design (sha256 is also "" in this mode — a deliberate no-read mode,
+  //             not a failure).
+  //   unsafe  → root WAS given but the file could not be verified safe-and-readable
+  //             (missing, permission error, or a symlink resolving outside root).
+  //             We can no longer prove it's secret-free, so we must NOT call it
+  //             clean — treat it as blocked (the previous behavior silently
+  //             skipped these and returned "clean", a fail-OPEN bug).
+  //   text    → scanned normally.
   let totalMatches = 0;
   let blocked = false;
+  let noRootMode = false;
 
   for (const id of idList) {
     if (!includedSet.has(id)) continue;
     const ref = refByid.get(id);
-    const text = readText(root, ref);
-    if (text === null) continue; // unreadable — skip (no content to scan)
-    const hits = findSecrets(text);
+    const r = safeRead(root, ref);
+    if (r.noRoot) { noRootMode = true; continue; }
+    if (r.unsafe) { blocked = true; continue; }
+    const hits = findSecrets(r.buf.toString('utf8'));
     if (hits.length > 0) {
       blocked = true;
       for (const [, count] of hits) totalMatches += count;
     }
   }
+  void noRootMode; // no-root is intentionally a no-op above; named for readability
 
   const secret_scan = blocked
     ? { status: 'blocked', count: totalMatches }

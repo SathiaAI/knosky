@@ -1,4 +1,4 @@
-// KnoSky route engine (KSV2-R1/R2) — structural destination -> ranked advisory route.
+// KnoSky route engine (KSV2-R1/R2/R3) — structural destination -> ranked advisory route.
 // Pure Node stdlib + internal imports only. ESM. No new deps.
 import { getRelated } from './retrieve.mjs';
 import { makeRouteDoc, validateRouteDoc } from './schema.mjs';
@@ -64,6 +64,16 @@ function isDoc(node) {
   );
 }
 
+/**
+ * Tokenise a string into lowercase alphanumeric tokens, stripping any "word:" prefix.
+ * @param {string} str
+ * @returns {Set<string>}
+ */
+function tokenise(str) {
+  const stripped = String(str || '').replace(/^\w+:/, '');
+  return new Set((stripped.toLowerCase().match(/[a-z0-9]+/g) || []));
+}
+
 // ---------------------------------------------------------------------------
 // kcRoute — main export
 // ---------------------------------------------------------------------------
@@ -74,15 +84,24 @@ function isDoc(node) {
  * @param {object} ctx         — retrieve context from load()
  * @param {string} destination — navigation target string
  * @param {object} [opts]
- * @param {number} [opts.limit=8] — max route entries
+ * @param {number} [opts.limit=8]    — max route entries
+ * @param {object} [opts.overlays]   — optional overlay map from readOverlays():
+ *                                     { '<relpath>': { coverage?: number(0..100), test?: 'pass'|'fail' } }
+ *                                     Absence means coverage is unknown — the coverage-unknown caveat fires.
  * @returns {object} route doc (passes validateRouteDoc)
  */
-export function kcRoute(ctx, destination, { limit = 8 } = {}) {
+export function kcRoute(ctx, destination, { limit = 8, overlays } = {}) {
   const clampedLimit = Math.max(1, Math.min(20, limit));
   const { matched, matchStrength } = parseDestination(ctx, destination, clampedLimit);
 
-  // Collect direct-match ids for scoring
+  // Collect direct-match ids + categories for scoring
   const directIds = new Set(matched.map(n => n.id));
+  const directCategories = new Set(
+    matched.map(n => String(n.category || '').toLowerCase()).filter(Boolean),
+  );
+
+  // Destination keyword tokens (strip any "word:" prefix)
+  const destTokens = tokenise(destination);
 
   // Expand to 1-hop neighbours via getRelated (imports + importedBy); de-dupe by id
   const candidateMap = new Map();
@@ -103,19 +122,20 @@ export function kcRoute(ctx, destination, { limit = 8 } = {}) {
 
   // Score candidates
   const caveats = [];
-  const seenChurnCaveat = false;
+  const lowCoverageCaveats = [];
   const scored = [];
 
   for (const [id, node] of candidateMap) {
     let score = 0;
     const reasons = [];
 
+    // Signal 1: destination match (+5)
     if (directIds.has(id)) {
       score += 5;
-      reasons.push('destination match');
+      reasons.push('destination');
     }
 
-    // imported-by / import-proximity: node imports a direct-match OR is imported by a direct-match
+    // Signal 2: import proximity (+2)
     const rel = getRelated(ctx, id);
     if (rel) {
       const importsDirectMatch = rel.imports.some(m => directIds.has(m.id));
@@ -126,13 +146,50 @@ export function kcRoute(ctx, destination, { limit = 8 } = {}) {
       }
     }
 
-    // churn signal
+    // Signal 3: same district (+1.5) — shares category with a direct match but is not itself a direct match
+    if (!directIds.has(id) && directCategories.size > 0) {
+      const cat = String(node.category || '').toLowerCase();
+      if (cat && directCategories.has(cat)) {
+        score += 1.5;
+        reasons.push('same district');
+      }
+    }
+
+    // Signal 4: keyword overlap (+1, capped once)
+    if (destTokens.size > 0) {
+      const candidateText = [node.title || '', ...(node.headings || [])].join(' ');
+      const candidateTokens = tokenise(candidateText);
+      const hasOverlap = [...destTokens].some(t => candidateTokens.has(t));
+      if (hasOverlap) {
+        score += 1;
+        reasons.push('name/heading match');
+      }
+    }
+
+    // Signal 5: recently changed (+1)
     if (node.churn && typeof node.churn === 'object' && node.churn.c > 0) {
       score += 1;
       reasons.push('recently changed');
     } else if (typeof node.churn === 'number' && node.churn > 0) {
       score += 1;
       reasons.push('recently changed');
+    }
+
+    // Signal 6: low coverage (+0.5 if overlays provided and coverage < 50)
+    if (overlays !== undefined && overlays !== null) {
+      const ref = safeRef(node);
+      if (ref) {
+        const overlay = overlays[ref];
+        if (overlay && typeof overlay.coverage === 'number') {
+          if (overlay.coverage < 50) {
+            score += 0.5;
+            lowCoverageCaveats.push(
+              'low coverage: ' + ref + ' (' + Math.round(overlay.coverage) + '%) — extra review advised',
+            );
+          }
+          // coverage >= 50: no change, no penalty
+        }
+      }
     }
 
     scored.push({ id, node, score, reason: reasons.join('; ') || 'neighbourhood match' });
@@ -154,10 +211,17 @@ export function kcRoute(ctx, destination, { limit = 8 } = {}) {
     }
   }
 
-  // — coverage unknown caveat when a candidate lacks coverage data
-  const hasCoverageGap = scored.some(s => s.node.coverage === undefined || s.node.coverage === null);
-  if (hasCoverageGap) {
-    caveats.push('coverage unknown: one or more nodes lack coverage overlay data');
+  // — low-coverage caveats (one per underperforming file, from signal 6)
+  for (const c of lowCoverageCaveats) {
+    caveats.push(c);
+  }
+
+  // — coverage unknown caveat: only when overlays were NOT provided
+  if (overlays === undefined || overlays === null) {
+    const hasCoverageGap = scored.some(s => s.node.coverage === undefined || s.node.coverage === null);
+    if (hasCoverageGap) {
+      caveats.push('coverage unknown: one or more nodes lack coverage overlay data');
+    }
   }
 
   // — mandatory advisory caveat (always present)

@@ -120,7 +120,10 @@ export function renderPrComment({ routeJson = {}, safetyJson = {} } = {}) {
       if (tests.length > 0) {
         lines.push('**Related tests:**');
         lines.push('');
-        for (const t of tests) lines.push(`- \`${t}\``);
+        for (const t of tests) {
+          const p = typeof t === 'string' ? t : (t && t.path);
+          if (p) lines.push(`- \`${p}\``);
+        }
         lines.push('');
       }
 
@@ -129,7 +132,10 @@ export function renderPrComment({ routeJson = {}, safetyJson = {} } = {}) {
       if (docs.length > 0) {
         lines.push('**Related docs:**');
         lines.push('');
-        for (const d of docs) lines.push(`- \`${d}\``);
+        for (const d of docs) {
+          const p = typeof d === 'string' ? d : (d && d.path);
+          if (p) lines.push(`- \`${p}\``);
+        }
         lines.push('');
       }
     }

@@ -167,6 +167,38 @@ const safetyJson = {
 }
 
 // ---------------------------------------------------------------------------
+// (j) tests/docs as {path} objects — render path, no [object Object]
+// ---------------------------------------------------------------------------
+{
+  const objRouteJson = {
+    knosky_protocol: '1.0',
+    artifact_type: 'pr-route',
+    advisory: true,
+    routes: [
+      {
+        file: 'core/example.mjs',
+        route: {
+          knosky_protocol: '1.0',
+          artifact_type: 'route',
+          advisory: true,
+          destination: 'file:core/example.mjs',
+          route: [],
+          alternates: [],
+          caveats: [],
+          confidence: 0.9,
+          tests: [{ path: 'test/x.test.js', id: 'test-x' }],
+          docs: [{ path: 'docs/x.md', id: 'doc-x' }],
+        },
+      },
+    ],
+  };
+  const comment = renderPrComment({ routeJson: objRouteJson, safetyJson });
+  ok('(j) object-form test path rendered', comment.includes('test/x.test.js'));
+  ok('(j) object-form doc path rendered', comment.includes('docs/x.md'));
+  ok('(j) no [object Object] in comment', !comment.includes('[object Object]'));
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));

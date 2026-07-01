@@ -11,7 +11,10 @@ import { gitChurn } from './churn.mjs';
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1]] : []).filter(Boolean));
 const ROOT = args.root && path.resolve(args.root);
 const OUT = args.out || null;
-const MAX = parseInt(args.max || '6000', 10);
+// Validate --max: a non-numeric/zero/negative value must NOT silently disable the
+// cap (NaN comparisons are always false, so `scanned > MAX` would never trip) —
+// that's a resource-exhaustion opening on a hostile/malformed CI invocation.
+const MAX = (() => { const n = parseInt(args.max || '6000', 10); return (Number.isFinite(n) && n > 0) ? n : 6000; })();
 const SHARE_SAFE = process.argv.includes('--share-safe');
 const INCLUDE_ABS = process.argv.includes('--include-absolute-root');
 const ALLOW_LEAKS = process.argv.includes('--allow-leaks');

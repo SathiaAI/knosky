@@ -242,8 +242,12 @@ export function kcRoute(ctx, destination, { limit = 8, overlays } = {}) {
     return { path, id: s.id, reason: s.reason, score: s.score };
   }
 
-  const route = routeEntries.map(toEntry).filter(e => isSafeRef(e.path) || !e.path.startsWith('/'));
-  const alternates = alternateEntries.map(toEntry).filter(e => isSafeRef(e.path) || !e.path.startsWith('/'));
+  // Defense in depth: only isSafeRef() gates output (the previous `|| !path.startsWith('/')`
+  // clause was a bug — any path lacking a leading '/' but containing '..' would pass through
+  // it unfiltered; validateRouteDoc() catches that downstream today, but this filter should
+  // not have been able to let it through in the first place).
+  const route = routeEntries.map(toEntry).filter(e => isSafeRef(e.path));
+  const alternates = alternateEntries.map(toEntry).filter(e => isSafeRef(e.path));
 
   // Confidence: direct -> ~0.95 ceiling; folder/district/edges/chain -> ~0.75; keyword -> ~0.6
   let confidence = 0;

@@ -68,5 +68,30 @@ function index(dir, out, extra = []) {
   ok('readiness never posts to "*"', !/postMessage\(\{type:"kc:ready"\},[^)]*\|\|"\*"\)/.test(t));
 }
 
+// 6) manifest-path-traversal: no node id or provenance.ref contains .. or an absolute path
+{
+  const d = tmp(), out = path.join(d, 'city.json');
+  fs.writeFileSync(path.join(d, 'safe.md'), '# Safe file\n\nhello world\n');
+  const r = index(d, out);
+  const city = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : { nodes: [] };
+  ok('build succeeds for path-traversal fixture', r.status === 0 && !!city.nodes, '(exit ' + r.status + ')');
+  const badId = city.nodes.some(n => /\.\./.test(n.id) || /^\//.test((n.id || '').replace(/^fs:/, '')));
+  const badRef = city.nodes.some(n => /\.\./.test(n.provenance?.ref) || /^\//.test(n.provenance?.ref));
+  ok('no node id or provenance.ref escapes root (no .. or absolute path)', !badId && !badRef);
+}
+
+// 7) log-PII: email addresses are scrubbed from indexed node titles, summaries, and headings
+{
+  const d = tmp(), out = path.join(d, 'city.json');
+  fs.writeFileSync(path.join(d, 'contact.md'), '# Reach admin@example.com\n\nEmail admin@example.com for help.\n');
+  const r = index(d, out);
+  const json = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '';
+  ok('build succeeds for PII fixture', r.status === 0 && !!json, '(exit ' + r.status + ')');
+  const emailRx = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+  const nodes = json ? (JSON.parse(json).nodes || []) : [];
+  const emitted = nodes.flatMap(n => [n.title, n.summary, ...(n.headings || [])]).filter(Boolean).join('\n');
+  ok('no email addresses in emitted node titles/summaries/headings', !emailRx.test(emitted));
+}
+
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));
 process.exit(failures ? 1 : 0);

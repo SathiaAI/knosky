@@ -18,6 +18,45 @@ const flags = new Set(argv.filter(a => a.startsWith('--')));
 const target = path.resolve(argv.find(a => !a.startsWith('--')) || '.');
 const NODE = process.execPath;
 
+// ---------------------------------------------------------------------------
+// ci subcommand: generate PR-GPS advisory artifacts (advisory, never breaks builds)
+// ---------------------------------------------------------------------------
+if (argv.find(a => !a.startsWith('--')) === 'ci') {
+  const { knoskyCi } = await import('../core/ci.mjs');
+
+  // Resolve a named flag's value from argv. Supports --flag=value and --flag value.
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) {
+      return argv[idx + 1];
+    }
+    return undefined;
+  };
+
+  const ciBase = getArgVal('--base');
+  const ciHead = getArgVal('--head');
+  const ciCity = getArgVal('--city');
+  const ciFailOnSecret = flags.has('--fail-on-secret');
+
+  const { exitCode, summaryMd, routeJson, safetyJson } = await knoskyCi({
+    root: process.cwd(),
+    base: ciBase,
+    head: ciHead,
+    cityPath: ciCity,
+    failOnSecret: ciFailOnSecret,
+  });
+
+  fs.writeFileSync('knosky-pr-summary.md', summaryMd, 'utf8');
+  fs.writeFileSync('knosky-pr-route.json', JSON.stringify(routeJson, null, 2) + '\n', 'utf8');
+  fs.writeFileSync('knosky-safety-report.json', JSON.stringify(safetyJson, null, 2) + '\n', 'utf8');
+
+  console.log(summaryMd);
+  process.exit(exitCode);
+}
+
 if (!fs.existsSync(target)) { console.error('KnoSky: path not found: ' + target); process.exit(1); }
 
 const outDir = path.join(target, '.knosky');

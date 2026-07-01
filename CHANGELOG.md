@@ -2,6 +2,20 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [0.5.0] - 2026-07-01 -- Route engine + PR-GPS (Protocol v1)
+
+### Added
+- **`.knosky` protocol foundation:** versioned config (`.knosky/config.yml`), `route.json` and `intent-manifest` schemas (`knosky_protocol: "1.0"`).
+- **Route engine (`kc_route`):** point at a destination -- a file, a folder, an import chain, a "district" (category) -- and get a ranked, advisory route through the repo with waypoints, alternates, confidence, and caveats. Structural only: file/folder/imports/dependency-chain, never semantic/code-meaning.
+- **`kc_bundle`:** builds a shareable intent-manifest (paths + sha256 + edges) with a fail-closed secret scan, for agents that need to share a scoped, verifiable file set.
+- **PR-GPS:** `knosky ci` generates an advisory navigation report for a pull request's changed files. A new GitHub Action posts/updates it as a single PR comment automatically -- advisory only, never blocks or gates a build.
+
+### Security
+- Independent adversarial pass ahead of this release: fixed a symlink-escape read and an unreadable-file fail-open in the bundle engine, a git-ref option-injection in the CI report generator, plus two additional issues found during the pass. See the repo's PR history for detail.
+
+### Notes
+- Everything above is **advisory-only, metadata-only, local, no telemetry** -- KnoSky reads structure, never uploads your code, and nothing here blocks or gates a build.
+
 ## [0.4.1] - 2026-06-29 — Security review fixes
 
 ### Security

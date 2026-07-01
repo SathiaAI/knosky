@@ -1,7 +1,8 @@
-// KnoSky route engine (KSV2-R1) — structural destination -> ranked advisory route.
+// KnoSky route engine (KSV2-R1/R2) — structural destination -> ranked advisory route.
 // Pure Node stdlib + internal imports only. ESM. No new deps.
-import { search, getRelated } from './retrieve.mjs';
+import { getRelated } from './retrieve.mjs';
 import { makeRouteDoc, validateRouteDoc } from './schema.mjs';
+import { parseDestination } from './destination.mjs';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -61,50 +62,6 @@ function isDoc(node) {
     ref.endsWith('.rst') ||
     ref.endsWith('.txt')
   );
-}
-
-// ---------------------------------------------------------------------------
-// Destination parser (R1 set)
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the destination string to an initial set of matching nodes.
- * Returns { matched: Node[], matchStrength: 'direct'|'folder'|'keyword' }
- *
- * @param {object} ctx    — retrieve context {city, byId}
- * @param {string} destination
- * @param {number} limit
- */
-function parseDestination(ctx, destination, limit) {
-  const dest = String(destination || '').trim();
-
-  // prefix: file:<path> — match by id "fs:<rest>" OR by provenance.ref === <rest>
-  if (dest.startsWith('file:')) {
-    const rest = dest.slice('file:'.length);
-    const byNodeId = ctx.byId.get('fs:' + rest);
-    if (byNodeId) return { matched: [byNodeId], matchStrength: 'direct' };
-    // fallback: scan provenance.ref
-    const byRef = ctx.city.nodes.find(n => n.provenance && n.provenance.ref === rest);
-    if (byRef) return { matched: [byRef], matchStrength: 'direct' };
-    return { matched: [], matchStrength: 'direct' };
-  }
-
-  // prefix: folder:<path> — all nodes whose provenance.ref starts with <rest>
-  if (dest.startsWith('folder:')) {
-    const rest = dest.slice('folder:'.length);
-    // normalise: ensure trailing slash for prefix match unless rest already ends with /
-    const prefix = rest.endsWith('/') ? rest : rest + '/';
-    const matched = ctx.city.nodes.filter(n => {
-      const ref = n.provenance && n.provenance.ref;
-      return typeof ref === 'string' && (ref.startsWith(prefix) || ref === rest);
-    });
-    return { matched, matchStrength: 'folder' };
-  }
-
-  // no prefix — keyword fallback via search
-  const hits = search(ctx, dest, { limit });
-  const matched = hits.map(h => ctx.byId.get(h.id)).filter(Boolean);
-  return { matched, matchStrength: 'keyword' };
 }
 
 // ---------------------------------------------------------------------------
@@ -224,14 +181,15 @@ export function kcRoute(ctx, destination, { limit = 8 } = {}) {
   const route = routeEntries.map(toEntry).filter(e => isSafeRef(e.path) || !e.path.startsWith('/'));
   const alternates = alternateEntries.map(toEntry).filter(e => isSafeRef(e.path) || !e.path.startsWith('/'));
 
-  // Confidence: direct match -> linear by top score; folder -> mid; keyword-only -> lower
+  // Confidence: direct -> ~0.95 ceiling; folder/district/edges/chain -> ~0.75; keyword -> ~0.6
   let confidence = 0;
   if (routeEntries.length > 0) {
     const topScore = routeEntries[0].score;
     if (matchStrength === 'direct') {
-      // direct hit scores at least 5; normalise to ~0.9 max
+      // direct hit scores at least 5; normalise to ~0.95 max
       confidence = Math.min(0.95, topScore / 10);
-    } else if (matchStrength === 'folder') {
+    } else if (matchStrength === 'folder' || matchStrength === 'district' ||
+               matchStrength === 'edges' || matchStrength === 'chain') {
       confidence = Math.min(0.75, topScore / 10);
     } else {
       // keyword — lower ceiling

@@ -1,0 +1,24 @@
+name: KnoSky PR-GPS
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-gps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo (full history so the diff works)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run KnoSky PR-GPS
+        uses: ./
+        with:
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}

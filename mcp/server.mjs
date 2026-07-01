@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { load, search, getNode, listCategories, getProvenance, getRelated } from "../core/retrieve.mjs";
+import { kcRoute } from "../core/route.mjs";
 
 const CITY = process.env.KC_CITY || process.argv[2];
 if (!CITY) { console.error("Knowledge City MCP: set KC_CITY (or pass a path) to a city-data.v2.json"); process.exit(1); }
@@ -68,6 +69,39 @@ server.registerTool("kc_related", {
   lines.push("imports (" + r.imports.length + "): " + (r.imports.map(x => x.source || x.id).join(", ") || "none"));
   lines.push("imported by (" + r.importedBy.length + "): " + (r.importedBy.map(x => x.source || x.id).join(", ") || "none"));
   return { content: [{ type: "text", text: lines.join(NL) }], structuredContent: r };
+});
+
+server.registerTool("kc_route", {
+  title: "Route to a destination (agent GPS)",
+  description: "ADVISORY, metadata-only route through the repo towards a destination. Returns where-to-look-first (ranked waypoints), alternates, related tests, related docs, caveats, and a confidence score. Does NOT read or analyse code — structural navigation only, local, no network. Verify findings before acting.",
+  inputSchema: {
+    destination: z.string().max(400).describe("navigation target — e.g. file:src/auth.js, folder:src/auth, or keywords"),
+    limit: z.number().int().min(1).max(20).optional().describe("max route entries (default 8, max 20)"),
+  },
+  annotations: { readOnlyHint: true, openWorldHint: false },
+}, async ({ destination, limit }) => {
+  const doc = kcRoute(ctx, String(destination).slice(0, 400), { limit: limit ? Math.min(Math.max(1, limit), 20) : 8 });
+  const lines = [
+    `Route to: ${doc.destination}  (confidence ${(doc.confidence * 100).toFixed(0)}%)`,
+    '',
+    'Route:',
+    ...(doc.route.map((e, i) => `  ${i + 1}. ${e.path}  [${e.reason}]`)),
+  ];
+  if (doc.alternates && doc.alternates.length > 0) {
+    lines.push('', 'Alternates:');
+    for (const e of doc.alternates) lines.push(`  - ${e.path}  [${e.reason}]`);
+  }
+  if (doc.tests && doc.tests.length > 0) {
+    lines.push('', 'Tests: ' + doc.tests.map(e => e.path).join(', '));
+  }
+  if (doc.docs && doc.docs.length > 0) {
+    lines.push('', 'Docs: ' + doc.docs.map(e => e.path).join(', '));
+  }
+  if (doc.caveats && doc.caveats.length > 0) {
+    lines.push('', 'Caveats:');
+    for (const c of doc.caveats) lines.push(`  ⚠ ${c}`);
+  }
+  return { content: [{ type: "text", text: lines.join('\n') }], structuredContent: doc };
 });
 
 await server.connect(new StdioServerTransport());

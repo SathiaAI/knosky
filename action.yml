@@ -1,0 +1,62 @@
+name: 'KnoSky PR-GPS'
+description: >-
+  Advisory, metadata-only navigation report posted on pull requests. Reads
+  file/folder/import structure only (never uploads code bodies), suggests
+  where to start reviewing a PR, and flags related tests/docs. Never blocks
+  or gates the build.
+author: 'SathiaAI'
+branding:
+  icon: 'compass'
+  color: 'blue'
+
+inputs:
+  base:
+    description: 'Base commit SHA to diff from (e.g. github.event.pull_request.base.sha).'
+    required: true
+  head:
+    description: 'Head commit SHA to diff to (e.g. github.event.pull_request.head.sha).'
+    required: true
+  root:
+    description: 'Path to the checked-out repo to index.'
+    required: false
+    default: '.'
+  github-token:
+    description: 'Token used to post/update the PR-GPS comment. Defaults to the workflow token.'
+    required: false
+    default: ${{ github.token }}
+  fail-on-secret:
+    description: >-
+      If "true", fail this step when a secret-like pattern is found in the
+      emitted advisory artifacts themselves (never in your source tree).
+      Defaults to "false" — this action is advisory-only by design.
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node for the KnoSky action itself
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Build the KnoSky index (best-effort — never fails the build)
+      shell: bash
+      run: |
+        node "${{ github.action_path }}/core/fs-indexer.mjs" \
+          --root "${{ inputs.root }}" \
+          --out "${{ inputs.root }}/.knosky-ci-city.json" \
+          --share-safe || true
+
+    - name: Run KnoSky PR-GPS and post/update the PR comment
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        KC_REPO: ${{ github.repository }}
+        KC_PR_NUMBER: ${{ github.event.pull_request.number }}
+        KC_BASE: ${{ inputs.base }}
+        KC_HEAD: ${{ inputs.head }}
+        KC_ROOT: ${{ inputs.root }}
+        KC_CITY: ${{ inputs.root }}/.knosky-ci-city.json
+        KC_FAIL_ON_SECRET: ${{ inputs.fail-on-secret }}
+      run: node "${{ github.action_path }}/action/post-comment.mjs"

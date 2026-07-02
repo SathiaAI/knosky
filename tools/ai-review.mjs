@@ -2,9 +2,11 @@
 // Ported from Sathia's tools/ai-review.mjs (proven pattern), re-scoped for KnoSky's own rules:
 // no-egress, approved TUF-evolution wording, scope-match/stub detection, local-only security logic.
 // Posts a single GitHub PR review with severity-tagged findings. Any CRITICAL => REQUEST_CHANGES (blocks merge).
+// D-166 (SAT-467): any P0/critical or ambiguous result (degraded reviewers) escalates to Paul, never silent.
 // Env: LITELLM_REVIEW_KEY, LITELLM_BASE_URL, GITHUB_TOKEN, PR_NUMBER, REPO, DIFF_PATH.
 import fs from 'fs';
 import https from 'https';
+import { shouldEscalateToPaul } from '../core/escalate.mjs';
 
 const { LITELLM_REVIEW_KEY, LITELLM_BASE_URL, GITHUB_TOKEN, PR_NUMBER, REPO, DIFF_PATH } = process.env;
 const log = m => process.stdout.write(`[ai-review] ${m}\n`);
@@ -107,27 +109,30 @@ const failed = roleResults.filter(r => !r.ok);
 const findings = roleResults.filter(r => r.ok).flatMap(r => parse(r.role, r.text));
 const criticals = findings.filter(f => f.sev === 'CRITICAL');
 const warnings = findings.filter(f => f.sev === 'WARNING');
-const allFailed = failed.length === ROLES.length;
+
+// D-166 (SAT-467): any P0/critical or ambiguous result must surface to Paul, never proceed silently.
+const { escalate, reasons, paulMessage } = shouldEscalateToPaul({ criticals, failed, total: ROLES.length });
 
 let md = `## 🤖 KnoSky AI Review\n\n`;
 md += ROLES.length === 3 ? `Reviewers: QA · Adversarial (DeepSeek) · **Architect (Opus)** — sensitive/large diff.\n\n` : `Reviewers: QA · Adversarial (DeepSeek).\n\n`;
 if (TRUNCATED) md += `⚠️ **Diff truncated at 60 KB** — hunks past that point were NOT reviewed.\n\n`;
-if (failed.length) md += `⚠️ **Reviewer degraded** — ${failed.map(f => `${f.role} (${f.err})`).join(', ')} did not complete${allFailed ? '. No reviewer succeeded → blocking until re-run.' : '.'}\n\n`;
+if (failed.length) md += `⚠️ **Reviewer degraded** — ${failed.map(f => `${f.role} (${f.err})`).join(', ')} did not complete${failed.length === ROLES.length ? '. No reviewer succeeded → blocking until re-run.' : '. Result is incomplete (ambiguous) — escalating to Paul.'}\n\n`;
 if (!findings.length && !failed.length) md += `✅ No material issues found against KnoSky's no-egress, claims-discipline, and security-logic checklist.\n`;
-else if (!findings.length && failed.length && !allFailed) md += `No findings from the reviewers that completed (see degraded note above).\n`;
+else if (!findings.length && failed.length && failed.length < ROLES.length) md += `No findings from the reviewers that completed (see degraded note above).\n`;
 else if (findings.length) {
   if (criticals.length) md += `### 🔴 CRITICAL (blocks merge) — ${criticals.length}\n` + criticals.map(f => `- **${f.file}** _(${f.role})_: ${f.hint}`).join('\n') + '\n\n';
   if (warnings.length) md += `### 🟡 WARNING (informational) — ${warnings.length}\n` + warnings.map(f => `- **${f.file}** _(${f.role})_: ${f.hint}`).join('\n') + '\n\n';
-  md += criticals.length ? `\n**Merge blocked until CRITICAL items are resolved or dismissed by Paul.**` : `\nNo blockers — warnings are informational.`;
+  if (!escalate) md += `\nNo blockers — warnings are informational.`;
 }
+if (paulMessage) md += `\n**${paulMessage}**`;
 
 if (process.env.REVIEW_LOCAL) {
   process.stdout.write('\n' + md + '\n');
-  log(`LOCAL gate: criticals=${criticals.length} warnings=${warnings.length} failed=${failed.length}`);
-  process.exit(criticals.length || allFailed ? 1 : 0);
+  log(`LOCAL gate: criticals=${criticals.length} warnings=${warnings.length} failed=${failed.length} escalate=${escalate} reasons=${JSON.stringify(reasons)}`);
+  process.exit(escalate ? 1 : 0);
 }
-const event = (criticals.length || allFailed) ? 'REQUEST_CHANGES' : 'COMMENT';
+const event = escalate ? 'REQUEST_CHANGES' : 'COMMENT';
 try { await gh('POST', `/repos/${REPO}/pulls/${PR_NUMBER}/reviews`, { body: md, event }); }
 catch (e) { log('post review failed: ' + (e && e.message ? e.message : String(e))); }
-if (criticals.length || allFailed) { log(`blocking: criticals=${criticals.length} allFailed=${allFailed}`); process.exit(1); }
+if (escalate) { log(`blocking: reasons=${JSON.stringify(reasons)}`); process.exit(1); }
 log(`pass: warnings=${warnings.length}`);

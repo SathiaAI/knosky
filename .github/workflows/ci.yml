@@ -7,6 +7,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # SAT-465 hardening (Architect review, PR #48 round 2): decisive job-level
+    # cap. Without this, GitHub's default (360 min) is the only backstop, and
+    # the adversarial-suite gate alone has an 8-file x 60s-per-file worst case
+    # (~8 min). 15 min gives real runtime (~10-15s today) generous headroom
+    # while still bounding a hang to something a human notices same-day.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

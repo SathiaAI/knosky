@@ -13,6 +13,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # SAT-465 hardening (Architect review, PR #48 round 2): see ci.yml for
+    # rationale -- same 8-file adversarial-suite gate runs in this job too.
+    timeout-minutes: 15
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4

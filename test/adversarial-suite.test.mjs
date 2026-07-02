@@ -118,6 +118,16 @@ for (const wf of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) 
     missingFromSkip.length === 0, missingFromSkip.join(', '));
   ok(`(d) ${wf} skip-list exactly matches SUITE (no stale/extra entries)`,
     extraInSkip.length === 0, extraInSkip.join(', '));
+
+  // Named, explicit worst-case check (Architect review, PR #48 round 2): this
+  // gate file itself must NEVER appear in the skip-list. It's already implied
+  // by "no stale/extra entries" above (this file isn't in SUITE), but that
+  // generic message doesn't explain WHY -- if this file were ever skip-listed,
+  // nothing else invokes the 8 SUITE files via spawnSync, so all 8 would
+  // silently stop running everywhere, forever, with no other signal. Called
+  // out explicitly so a CI failure here is unmistakable about the stakes.
+  ok(`(d) ${wf} skip-list never includes adversarial-suite.test.mjs itself (would silently disable all 8 security tests)`,
+    !skippedSet.has('test/adversarial-suite.test.mjs'));
 }
 
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));

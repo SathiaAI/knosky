@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tgz
           tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
-          /tmp/gitleaks detect --source . --no-banner --redact --exit-code 1
+          /tmp/gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --exit-code 1
 
   ai-review:
     name: AI Review

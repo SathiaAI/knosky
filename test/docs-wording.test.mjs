@@ -1,5 +1,5 @@
-// KnoSky docs-wording regression test (SAT-445 / Decisions Log D-164).
-// Locks the cleared TUF-evolution sentence and forbids the banned phrases.
+// KnoSky docs-wording regression test (SAT-445 / SAT-473 / Decisions Log D-164).
+// Locks the cleared TUF-evolution sentence verbatim and forbids the banned phrases.
 // Run: node test/docs-wording.test.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,33 +28,38 @@ function read(rel) {
 }
 
 // ---------------------------------------------------------------------------
-// (a) Decisions Log D-164 cleared sentence is present in SECURITY.md.
-//     The sentence: "KnoSky's local trust model applies the core security
-//     principles of TUF... adapted... to a fully local, no-egress agentic
-//     environment, with attestation formats based on in-toto/DSSE."
-//     We check the load-bearing substrings rather than exact text so minor
-//     editorial rewraps do not break the test.
+// (a) Decisions Log D-164 cleared sentence is present in SECURITY.md,
+//     verbatim and byte-for-byte. Any deviation is a hard failure.
 // ---------------------------------------------------------------------------
+const APPROVED_SENTENCE =
+  "KnoSky's local trust model applies the core security principles of TUF" +
+  " — role separation, threshold signing, survivable key compromise, and freshness-guaranteed revocation" +
+  " — adapted from TUF's server-oriented update distribution to a fully local, no-egress agentic environment," +
+  " with attestation formats based on in-toto/DSSE.";
+
 {
   const sec = read('SECURITY.md');
   ok(
-    'SECURITY.md contains "local trust model applies the core security principles of TUF"',
-    sec.includes('local trust model applies the core security principles of TUF'),
-  );
-  ok(
-    'SECURITY.md contains "fully local, no-egress agentic environment"',
-    sec.includes('fully local, no-egress agentic environment'),
-  );
-  ok(
-    'SECURITY.md contains "attestation formats based on in-toto/DSSE"',
-    sec.includes('attestation formats based on in-toto/DSSE'),
+    'SECURITY.md contains the exact D-164 approved TUF-evolution sentence (verbatim)',
+    sec.includes(APPROVED_SENTENCE),
+    sec.includes(APPROVED_SENTENCE)
+      ? ''
+      : 'byte-for-byte match failed — sentence was reworded or is missing',
   );
 }
 
 // ---------------------------------------------------------------------------
-// (b) Forbidden phrases never appear in any public doc (D-164 prohibition).
+// (b) Forbidden phrases never appear in any public doc (D-164 prohibition,
+//     expanded in SAT-473 to include all phrases banned by the ticket).
 // ---------------------------------------------------------------------------
-const FORBIDDEN = ['TUF-compatible', 'implements TUF'];
+const FORBIDDEN = [
+  'TUF-compatible',
+  'implements TUF',
+  'tamper-evident',
+  'zero-trust',
+  'enterprise-grade',
+  'SOC2',
+];
 
 for (const docPath of PUBLIC_DOCS) {
   let text;

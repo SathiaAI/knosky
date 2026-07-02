@@ -27,6 +27,12 @@ When reporting, please include: the version/commit, steps to reproduce, and the 
 - Build with `--share-safe` before sharing: it strips the absolute root path (basename only), runs a fail-closed secret scan, and prints a safety report. Builds **fail closed** if a secret-like value is detected (override only with `--allow-leaks`).
 - Open city files you did not generate the same way you would any untrusted HTML.
 
+## Trust model
+
+KnoSky's local trust model applies the core security principles of TUF (The Update Framework) — threat modeling against key compromise, tamper-evident artifacts, and explicit trust delegation — adapted, necessarily and intentionally, to a fully local, no-egress agentic environment, with attestation formats based on in-toto/DSSE.
+
+KnoSky does not claim protocol-level compliance with or a full implementation of TUF. Decisions Log D-164 records the rationale for these precise boundaries.
+
 ## Scope
 
 In scope: injection in generated artifacts, secret leakage through projections, the local MCP server, and the indexer's privacy defaults. Out of scope: issues that require an attacker to already control your machine or your repository's contents with your knowledge.

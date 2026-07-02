@@ -1,17 +1,18 @@
-// KnoSky authorization ground-truth oracle (SAT-450).
+// KnoSky authorization ground-truth oracle (SAT-450). Lives in test/ — used
+// only by auth-oracle-fuzz.test.mjs, not part of the published core/ surface.
 // Independent re-derivation of expected authorization outcomes for differential
 // fuzzing against kcRoute and kcBundle.  Shares NO code paths with those modules;
 // divergence between oracle and system output signals a correctness bug.
 //
 // Import contract (independence boundary):
-//   - findSecrets from ./contract.mjs — raw pattern spec that is the shared ground
+//   - findSecrets from ../core/contract.mjs — raw pattern spec that is the shared ground
 //     truth for both oracle and system.  The oracle applies it directly to known
 //     content strings; kcBundle applies it via its own file-read path.  Any
 //     disagreement exposes a file-read, scan, or aggregation bug in the system.
 //   - Nothing else from core/ is imported.
 // Pure Node stdlib, ESM — no external dependencies.
 
-import { findSecrets } from './contract.mjs';
+import { findSecrets } from '../core/contract.mjs';
 
 // ---------------------------------------------------------------------------
 // Internal helpers

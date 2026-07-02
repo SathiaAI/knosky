@@ -25,7 +25,7 @@ import {
   verifyRouteDoc,
   oracleScanDecision,
   verifyScanDecision,
-} from '../core/auth-oracle.mjs';
+} from './auth-oracle.mjs';
 
 let failures = 0;
 const ok = (name, cond, extra = '') => {

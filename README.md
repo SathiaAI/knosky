@@ -104,7 +104,7 @@ The action posts (and updates) a single advisory comment on the PR listing which
 - Scrubs common secret/PII patterns and **fails the build closed** if a secret-like value is detected. Build with **`--share-safe`** for a safety report before sharing.
 - Generated cities embed your data as inert JSON and escape untrusted file/folder names — opening or sharing a city won't execute injected code.
 
-More: **[PRIVACY.md](./PRIVACY.md)** · **[LIMITATIONS.md](./LIMITATIONS.md)** · **[SECURITY.md](./SECURITY.md)** · **[CHANGELOG.md](./CHANGELOG.md)**
+More: **[PRIVACY.md](./PRIVACY.md)** · **[LIMITATIONS.md](./LIMITATIONS.md)** · **[SECURITY.md](./SECURITY.md)** · **[CHANGELOG.md](./CHANGELOG.md)** · **[How KnoSky compares](./wiki/comparison.md)**
 
 ## License & credits
 Free to use under the **[Functional Source License (FSL-1.1-MIT)](./LICENSE.md)** — use it freely; you just can't repackage it as a competing product. Converts to MIT two years after each release. "KnoSky" is a trademark of the author.

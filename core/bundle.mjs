@@ -5,6 +5,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { join, relative, isAbsolute, sep } from 'node:path';
 import { findSecrets } from './contract.mjs';
 import { makeIntentManifest, validateIntentManifest } from './schema.mjs';
+import { extractLedgerSeq } from './freshness.mjs';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -160,7 +161,12 @@ export function kcBundle(ctx, ids, { root, expiry = null } = {}) {
     ? { status: 'blocked', count: totalMatches }
     : { status: 'clean', count: 0 };
 
-  const manifest = makeIntentManifest({ paths, edges, expiry, secret_scan });
+  // Ledger-anchored freshness (SAT-444): propagate the monotone commit count
+  // from the city envelope into the manifest so consumers can apply the V13
+  // high-water-mark guard without needing the original city object.
+  const ledger_seq = extractLedgerSeq(ctx.city);
+
+  const manifest = makeIntentManifest({ paths, edges, expiry, secret_scan, ledger_seq });
 
   // Invariant: manifest MUST pass validateIntentManifest
   const validation = validateIntentManifest(manifest);

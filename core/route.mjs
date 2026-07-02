@@ -3,6 +3,7 @@
 import { getRelated } from './retrieve.mjs';
 import { makeRouteDoc, validateRouteDoc } from './schema.mjs';
 import { parseDestination } from './destination.mjs';
+import { extractLedgerSeq } from './freshness.mjs';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -233,6 +234,9 @@ export function kcRoute(ctx, destination, { limit = 8, overlays } = {}) {
     caveats.push('route is based on rev ' + source_rev + ' and may be stale');
   }
 
+  // Ledger-anchored freshness (SAT-444): read the monotone commit count from the city.
+  const ledger_seq = extractLedgerSeq(ctx.city);
+
   // Slice into route + alternates
   const routeEntries = scored.slice(0, clampedLimit);
   const alternateEntries = scored.slice(clampedLimit, clampedLimit + 5);
@@ -283,6 +287,7 @@ export function kcRoute(ctx, destination, { limit = 8, overlays } = {}) {
     caveats,
     confidence,
     source_rev,
+    ledger_seq,
   });
 
   // Attach tests + docs (extra fields beyond the base envelope — schema.validateRouteDoc does not reject them)

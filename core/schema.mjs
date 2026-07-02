@@ -86,6 +86,9 @@ function checkAbsolutePaths(entries, fieldName, errors) {
  * @param {string[]}  [opts.caveats]     Advisory notes.
  * @param {number}    [opts.confidence]  Confidence score [0..1].
  * @param {string|null} [opts.source_rev] VCS revision that produced this doc.
+ * @param {number|null} [opts.ledger_seq] Ledger sequence number (SAT-444) —
+ *   monotone commit count from the city that produced this route doc.
+ *   null means the city predates ledger-anchored freshness.
  * @returns {object}
  */
 export function makeRouteDoc({
@@ -95,6 +98,7 @@ export function makeRouteDoc({
   caveats = [],
   confidence = 0,
   source_rev = null,
+  ledger_seq = null,
 } = {}) {
   return {
     knosky_protocol: PROTOCOL_VERSION,
@@ -102,6 +106,7 @@ export function makeRouteDoc({
     advisory: true,
     generated_at: new Date().toISOString(),
     source_rev,
+    ledger_seq,
     destination,
     route,
     alternates,
@@ -147,6 +152,13 @@ export function validateRouteDoc(doc) {
     errors.push(`confidence must be a number in [0, 1], got: ${JSON.stringify(doc.confidence)}`);
   }
 
+  // ledger_seq: must be null or a non-negative integer (SAT-444)
+  if (doc.ledger_seq !== undefined && doc.ledger_seq !== null) {
+    if (typeof doc.ledger_seq !== 'number' || !Number.isInteger(doc.ledger_seq) || doc.ledger_seq < 0) {
+      errors.push(`ledger_seq must be null or a non-negative integer, got: ${JSON.stringify(doc.ledger_seq)}`);
+    }
+  }
+
   // Absolute-path invariant applies to route[] and alternates[]
   if (Array.isArray(doc.route)) {
     checkAbsolutePaths(doc.route, 'route', errors);
@@ -170,6 +182,9 @@ export function validateRouteDoc(doc) {
  * @param {unknown[]} [opts.edges]       Dependency edges.
  * @param {string|null} [opts.expiry]    ISO-8601 expiry timestamp or null.
  * @param {object}   opts.secret_scan    REQUIRED secret-scan result object.
+ * @param {number|null} [opts.ledger_seq] Ledger sequence number (SAT-444) —
+ *   monotone commit count from the city that produced this manifest.
+ *   null means the city predates ledger-anchored freshness.
  * @returns {object}
  */
 export function makeIntentManifest({
@@ -177,6 +192,7 @@ export function makeIntentManifest({
   edges = [],
   expiry = null,
   secret_scan,
+  ledger_seq = null,
 } = {}) {
   return {
     knosky_protocol: PROTOCOL_VERSION,
@@ -186,6 +202,7 @@ export function makeIntentManifest({
     paths,
     edges,
     expiry,
+    ledger_seq,
     secret_scan,
   };
 }
@@ -236,6 +253,13 @@ export function validateIntentManifest(doc) {
 
     // Absolute-path invariant on paths[].path
     checkAbsolutePaths(doc.paths, 'paths', errors);
+  }
+
+  // ledger_seq: must be null or a non-negative integer (SAT-444)
+  if (doc.ledger_seq !== undefined && doc.ledger_seq !== null) {
+    if (typeof doc.ledger_seq !== 'number' || !Number.isInteger(doc.ledger_seq) || doc.ledger_seq < 0) {
+      errors.push(`ledger_seq must be null or a non-negative integer, got: ${JSON.stringify(doc.ledger_seq)}`);
+    }
   }
 
   // secret_scan must be present and have a valid status

@@ -14,6 +14,7 @@
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, openSync, fsyncSync, closeSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { MAX_PLAUSIBLE_LEDGER_SEQ } from './constants.mjs';
 
 // ---------------------------------------------------------------------------
 // HWM file I/O
@@ -107,13 +108,17 @@ export function writeHwm(hwmPath, seq) {
  * @param {string} hwmPath  Path to the independently-persisted HWM file.
  * @returns {{ ok: boolean, seq: number, hwm: number, error?: string }}
  */
+// Second layer of defense: enforced here too (not only in
+// core/freshness.mjs's extractLedgerSeq) so checkAndAdvance is safe even if
+// called directly. Imports the single source of truth from constants.mjs
+// (a dependency-free module) so the two layers cannot silently diverge.
 export function checkAndAdvance(seq, hwmPath) {
-  if (!Number.isInteger(seq) || seq < 0) {
+  if (!Number.isInteger(seq) || seq < 0 || seq > MAX_PLAUSIBLE_LEDGER_SEQ) {
     return {
       ok: false,
       seq,
       hwm: -1,
-      error: `seq must be a non-negative integer, got: ${JSON.stringify(seq)}`,
+      error: `seq must be a non-negative integer no greater than ${MAX_PLAUSIBLE_LEDGER_SEQ}, got: ${JSON.stringify(seq)}`,
     };
   }
 

@@ -15,6 +15,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { checkAndAdvance } from './ledger.mjs';
+import { MAX_PLAUSIBLE_LEDGER_SEQ } from './constants.mjs';
 
 // ---------------------------------------------------------------------------
 // extractLedgerSeq — read the ledger_seq stored in a city envelope
@@ -22,7 +23,8 @@ import { checkAndAdvance } from './ledger.mjs';
 
 /**
  * Extract the `ledger_seq` from a city envelope or any artifact that carries
- * one.  Returns null when absent or not a non-negative integer.
+ * one.  Returns null when absent, not a non-negative integer, or implausibly
+ * large (see MAX_PLAUSIBLE_LEDGER_SEQ).
  *
  * @param {object} obj  City envelope or comparable artifact object.
  * @returns {number|null}
@@ -31,6 +33,7 @@ export function extractLedgerSeq(obj) {
   if (!obj || typeof obj !== 'object') return null;
   const seq = obj.ledger_seq;
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) return null;
+  if (seq > MAX_PLAUSIBLE_LEDGER_SEQ) return null;
   return seq;
 }
 

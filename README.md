@@ -18,6 +18,11 @@ Open **[`demo/knosky-demo.html`](./demo/knosky-demo.html)** in your browser (jus
 Your project grows faster than anyone can hold in their head. Hundreds of files, decisions, and docs across folders. A file tree tells you what files exist — not what the *system* is. So things get lost, decisions get re-litigated, and your AI assistant confidently makes things up about your own codebase.
 
 ## What you get (the outcome)
+
+> **Measured (SAT-439, 5 tasks, naive agent vs. KnoSky-guided agent):**
+> **68% fewer tokens · 70% fewer tool calls · 6× faster to the right file**
+> *(All guided runs answered correctly; the naive agent found the target in 3 of 5 tasks and answered correctly in 0.)*
+
 - **See your whole project in one screen.** Instead of scrolling a file tree, you see the *shape* of everything — which areas are big, how they connect, where the gaps are. New collaborators get oriented in minutes, not weeks.
 - **Find anything in seconds.** Search the city — or ask your assistant *"where does auth live / what did we decide about billing"* — and jump straight to the **live file**.
 - **Your AI answers from YOUR source, with citations.** Connect it to Claude / Cursor / VS Code / Gemini and your assistant stops guessing about your codebase — it cites the real file, every time.

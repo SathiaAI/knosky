@@ -7,6 +7,7 @@ import { execSync } from 'node:child_process';
 import { SCHEMA_VERSION, IGNORE_DEFAULTS, deriveCategories, serializeNode, validateCity, setRedactTerms, findSecrets } from './contract.mjs';
 import { extractImportSpecifiers, resolveSpec } from './edges.mjs';
 import { gitChurn } from './churn.mjs';
+import { computeLedgerSeq } from './freshness.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1]] : []).filter(Boolean));
 const ROOT = args.root && path.resolve(args.root);
@@ -163,10 +164,15 @@ const preList = preHits.map(h => h[0] + ':' + h[1]).join(', ');
 const nodes = raw.map(serializeNode);
 const catIds = [...new Set(nodes.map(n => n.category))].sort();
 const categories = deriveCategories(catIds);
+// Ledger-anchored freshness (SAT-444): monotone commit count, used as a
+// replay-resistant sequence number.  Consumers compare against the last
+// accepted ledger_seq (V13 high-water-mark guard) to detect rollbacks.
+const ledger_seq = computeLedgerSeq(ROOT);
 const city = {
   schema_version: SCHEMA_VERSION,
   generated_at: new Date().toISOString(),
   source: { kind: 'fs', ref: INCLUDE_ABS ? ROOT : path.basename(ROOT), rev: REV },
+  ledger_seq,
   categories, node_count: nodes.length, nodes,
 };
 

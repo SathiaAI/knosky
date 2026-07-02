@@ -33,6 +33,10 @@ KnoSky's local trust model applies the core security principles of TUF (The Upda
 
 KnoSky does not claim protocol-level compliance with or a full implementation of TUF. Decisions Log D-164 records the rationale for these precise boundaries.
 
+## Local trust boundary
+
+HWM-file integrity (the `ledger.hwm.json` high-water-mark guard introduced in SAT-443) is part of KnoSky's local trust boundary: an attacker who can delete or modify that file — or any file under KnoSky's data directory — already has local write access to the machine, which is equivalent to controlling KnoSky's own code. This is the same boundary D-164 draws for the trust root generally; no fully-local, no-egress tool can defend against an attacker with local filesystem write access without a remote or hardware anchor, which would violate KnoSky's core no-egress design principle.
+
 ## Scope
 
 In scope: injection in generated artifacts, secret leakage through projections, the local MCP server, and the indexer's privacy defaults. Out of scope: issues that require an attacker to already control your machine or your repository's contents with your knowledge.

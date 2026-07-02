@@ -1,6 +1,6 @@
-// KnoSky ledger high-water-mark guard tests (SAT-443 / V13).
+// KnoSky ledger high-water-mark guard tests (SAT-443 / SAT-476 / V13).
 // Run: node test/ledger.test.mjs
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readHwm, writeHwm, checkAndAdvance } from '../core/ledger.mjs';
@@ -142,6 +142,70 @@ function hwmPath(name) {
   checkAndAdvance(1,  path);   // refused
   checkAndAdvance(0,  path);   // refused
   ok('(j) HWM stays at peak 50 after rollback attempts', readHwm(path) === 50);
+}
+
+// ---------------------------------------------------------------------------
+// (k) RED-TEAM (SAT-476): HWM-file deletion bypass
+//
+// Structural finding: readHwm() returns 0 on ENOENT by design ("first run —
+// any sequence is valid").  An attacker with local write access who DELETES
+// (rather than rewrites) the HWM file resets the guard to zero — the next
+// ledger state, however old or truncated, is accepted as a first-run state.
+// This is an inherent property of any fully-local watermark scheme; there is
+// no code fix (see SECURITY.md trust-boundary note and D-168 Decisions Log).
+//
+// Synthetic fixture pair used by this scenario:
+//   • populated ledger at sequence 999 (high-water mark persisted)
+//   • replay of an old/truncated ledger at sequence 1 immediately after deletion
+//
+// The scenario confirms the *documented* behavior — guard resets to accept-any,
+// no crash, no silent data corruption, no acceptance of an out-of-range value —
+// rather than silently missing an unexpected failure mode.
+// ---------------------------------------------------------------------------
+{
+  const path = hwmPath('k-hwm-deletion-bypass');
+
+  // Synthetic fixture: populate ledger to a known high sequence.
+  const HIGH_SEQ = 999;   // fixture watermark — represents a mature ledger
+  const OLD_SEQ  = 1;     // fixture replay — old/truncated state an attacker presents
+
+  // Step 1: establish the high watermark (normal operation).
+  const r1 = checkAndAdvance(HIGH_SEQ, path);
+  ok('(k) fixture: populated ledger accepted at HIGH_SEQ=999', r1.ok === true, JSON.stringify(r1));
+  ok('(k) fixture: HWM file written at 999', readHwm(path) === HIGH_SEQ);
+
+  // Step 2: confirm the anti-truncation guard blocks an incoming old state
+  //         BEFORE deletion — baseline proof the guard is working.
+  const rGuardActive = checkAndAdvance(OLD_SEQ, path);
+  ok('(k) baseline: OLD_SEQ=1 is refused while HWM file exists', rGuardActive.ok === false,
+    JSON.stringify(rGuardActive));
+  ok('(k) baseline: refusal error mentions anti-truncation', typeof rGuardActive.error === 'string' &&
+    rGuardActive.error.includes('anti-truncation'), rGuardActive.error);
+
+  // Step 3: attacker action — delete (not corrupt, not rewrite) the HWM file.
+  unlinkSync(path);
+  const hwmAfterDeletion = readHwm(path);   // should return 0 (ENOENT → first-run)
+  ok('(k) after deletion: readHwm returns 0 (guard reset to zero)', hwmAfterDeletion === 0,
+    String(hwmAfterDeletion));
+
+  // Step 4: post-deletion replay — the "old" ledger state is now accepted
+  //         because the guard treats it as a first-run entry.  This is the
+  //         documented bypass: fully accepted, no crash, no out-of-range error.
+  const rBypass = checkAndAdvance(OLD_SEQ, path);
+  ok('(k) bypass confirmed: OLD_SEQ=1 accepted after HWM deletion (documented behavior)',
+    rBypass.ok === true, JSON.stringify(rBypass));
+  ok('(k) bypass: HWM file re-created at OLD_SEQ=1 (not at 999)',
+    readHwm(path) === OLD_SEQ);
+
+  // Step 5: guard is functional again from the new (reset) baseline —
+  //         no crash, no corrupt state, no acceptance of an out-of-range value.
+  const rPostBypass = checkAndAdvance(OLD_SEQ - 1, path);   // attempt to go below OLD_SEQ
+  ok('(k) post-bypass: guard still refuses further rollback below reset baseline',
+    rPostBypass.ok === false, JSON.stringify(rPostBypass));
+
+  const rAdvance = checkAndAdvance(OLD_SEQ + 1, path);       // normal advance
+  ok('(k) post-bypass: normal advance above reset baseline is accepted',
+    rAdvance.ok === true, JSON.stringify(rAdvance));
 }
 
 // ---------------------------------------------------------------------------

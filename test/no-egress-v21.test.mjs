@@ -161,27 +161,44 @@ function networkLines(text) {
   ok('(3a) tools/ is NOT in package.json "files" (not published)', !toolsPublished,
     toolsPublished ? 'tools/ is listed: ' + publishedFiles.join(', ') : '');
 
-  // (3b) No core/published module imports tools/ai-review.mjs
+  // (3b) No core/published module imports tools/ai-review.mjs.
+  // Walks each published dir recursively (not just one level deep) so a
+  // future nested subdirectory can't silently escape this check.
   const publishedDirs = ['core', 'bin', 'mcp', 'action'];
+
+  function collectJsFiles(dirPath) {
+    let results = [];
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+      const full = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        results = results.concat(collectJsFiles(full));
+      } else if (entry.isFile() && (entry.name.endsWith('.mjs') || entry.name.endsWith('.js'))) {
+        results.push(full);
+      }
+    }
+    return results;
+  }
+
   const aiReviewImported = publishedDirs.some(dir => {
     const dirPath = path.join(ROOT, dir);
     if (!fs.existsSync(dirPath)) return false;
-    return fs.readdirSync(dirPath)
-      .filter(f => f.endsWith('.mjs') || f.endsWith('.js'))
-      .some(f => {
-        try {
-          return fs.readFileSync(path.join(dirPath, f), 'utf8').includes('ai-review');
-        } catch { return false; }
-      });
+    return collectJsFiles(dirPath).some(f => {
+      try {
+        return fs.readFileSync(f, 'utf8').includes('ai-review');
+      } catch { return false; }
+    });
   });
-  ok('(3b) No published core/bin/mcp/action module imports tools/ai-review.mjs',
+  ok('(3b) No published core/bin/mcp/action module imports tools/ai-review.mjs (recursive scan)',
     !aiReviewImported);
 
-  // (3c) tools/ai-review.mjs exits early when LITELLM_REVIEW_KEY is absent
+  // (3c) tools/ai-review.mjs exits early when LITELLM_REVIEW_KEY is absent.
+  // Verifies process.exit(0) is causally inside the `if (!LITELLM_REVIEW_KEY...)`
+  // block, not just present independently elsewhere in the file (two
+  // unrelated matches could otherwise pass this check after a refactor).
   const aiText = src('tools/ai-review.mjs');
-  const hasGuard = /LITELLM_REVIEW_KEY/.test(aiText) &&
-                   /process\.exit\s*\(0\)/.test(aiText);
-  ok('(3c) tools/ai-review.mjs contains an early-exit guard when LITELLM_REVIEW_KEY is absent',
+  const guardBlockMatch = aiText.match(/if\s*\(\s*!LITELLM_REVIEW_KEY[\s\S]{0,200}?\)\s*\{([\s\S]{0,200}?)\}/);
+  const hasGuard = !!guardBlockMatch && /process\.exit\s*\(\s*0\s*\)/.test(guardBlockMatch[1]);
+  ok('(3c) tools/ai-review.mjs process.exit(0) is inside the LITELLM_REVIEW_KEY-absent guard block',
     hasGuard);
 
   // (3d) The two https calls are the only network calls in tools/ai-review.mjs

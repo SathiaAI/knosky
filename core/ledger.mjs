@@ -12,7 +12,7 @@
 //
 // Pure Node stdlib, ESM — no third-party dependencies.
 
-import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, openSync, fsyncSync, closeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -70,7 +70,20 @@ export function writeHwm(hwmPath, seq) {
   // (ENOENT path) or throw (parse error), both of which weaken security.
   const tmp = hwmPath + '.tmp';
   writeFileSync(tmp, JSON.stringify({ ledger_hwm: seq }) + '\n', 'utf8');
+  // fsync the temp file's contents before rename — otherwise the rename can
+  // land on disk before the data it points to does (SAT-474 hardening review).
+  const tmpFd = openSync(tmp, 'r');
+  try { fsyncSync(tmpFd); } finally { closeSync(tmpFd); }
   renameSync(tmp, hwmPath);
+  // fsync the containing directory so the rename itself (the directory-entry
+  // update) is durable — without this, a crash immediately after renameSync
+  // can leave the old HWM file name visible on some filesystems/mount options
+  // (e.g. ext4 without data=ordered). POSIX-specific guarantee; best-effort
+  // on platforms where directory fsync isn't supported.
+  try {
+    const dirFd = openSync(dir, 'r');
+    try { fsyncSync(dirFd); } finally { closeSync(dirFd); }
+  } catch { /* best-effort; not all platforms support directory fsync */ }
 }
 
 // ---------------------------------------------------------------------------

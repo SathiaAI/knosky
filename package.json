@@ -10,6 +10,8 @@
     "bin",
     "core",
     "renderer",
+    "action",
+    "action.yml",
     "mcp/server.mjs",
     "README.md",
     "LICENSE.md",

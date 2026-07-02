@@ -40,6 +40,7 @@ import {
   verifyManifest,
   getKey,
 } from '../core/key-store.mjs';
+import { make1KeyFixture } from './key-store-quorum-redteam.mjs';
 import { makeIntentManifest } from '../core/schema.mjs';
 
 // Cross-reference: the sub-stories below are in-scope for SAT-452 coverage but
@@ -139,21 +140,13 @@ const baseManifest = makeIntentManifest({
 // When a store is driven down to exactly 1 non-revoked key via prior legitimate
 // revocations, M=0 → required=0. The sole key self-revokes with zero approvals.
 // This is INTENTIONAL design (self-wipe, not a bypass; D-167 / SAT-472 comment).
+//
+// Reuses make1KeyFixture() from key-store-quorum-redteam.mjs (Architect review,
+// PR #42) instead of reconstructing the same 1-key setup inline — the fixture
+// was already exported for exactly this kind of cross-file reuse.
 // ---------------------------------------------------------------------------
 {
-  // Build a 1-key store: start with 3 keys, legitimately revoke 2 of them.
-  const ks1 = createKeyStore();
-  const r1 = ks1.activeKeyId;
-  const r2 = rotateKey(ks1);
-  const sole = rotateKey(ks1);   // sole survivor after the two revocations below
-
-  // Legitimate revocations at N=3 then N=2 to reach N=1.
-  const ar1a = makeRevocationApproval(ks1, r2, r1);
-  const ar1b = makeRevocationApproval(ks1, sole, r1);
-  revokeKey(ks1, r1, [ar1a, ar1b]);   // N=3→2
-
-  const ar2 = makeRevocationApproval(ks1, sole, r2);
-  revokeKey(ks1, r2, [ar2]);           // N=2→1 (quorum=1)
+  const { ks: ks1, soleKeyId: sole } = make1KeyFixture();
 
   const nonRevokedPeers = [...ks1.keys.values()].filter(
     e => e.key_id !== sole && e.status !== 'revoked',

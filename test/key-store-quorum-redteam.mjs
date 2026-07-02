@@ -495,30 +495,43 @@ const baseManifest = makeIntentManifest({
 }
 
 // ---------------------------------------------------------------------------
-// SAT-478 gate  revokeKey must remain unreachable from bin/ and mcp/
+// SAT-478 gate  revokeKey must remain unreachable from any non-test surface
 //
 // SAT-478 (SECURITY.md, D-167): revokeKey() at M=0 authorizes by state, not
 // caller identity -- any caller can wipe the sole remaining key with zero
 // approvals and zero proof of key possession. The ONLY current mitigation is
-// that revokeKey has no reachable call site from the CLI or MCP server. This
-// check enforces that in code, not just in a Linear ticket: if a future PR
-// wires revokeKey into either surface without first resolving SAT-478
-// (caller-authentication), this test fails loudly instead of silently
-// shipping an exploitable path.
+// that revokeKey has no reachable call site outside core/key-store.mjs and
+// test/. This check enforces that in code, not just in a Linear ticket: if a
+// future PR wires revokeKey into ANY production surface -- bin/, mcp/, or a
+// not-yet-existing directory (lib/, plugins/, server/, etc.) -- without first
+// resolving SAT-478, this test fails loudly instead of silently shipping an
+// exploitable path. Whole-repo scan (not just bin/+mcp/) so a brand-new
+// directory can't quietly bypass it (Architect review, PR #42 re-review).
+//
+// Known limitation, stated plainly rather than overclaimed: this is a text
+// scan, not static analysis -- it does not catch an aliased reference
+// (`const r = revokeKey; r(...)`) or a dynamic re-export. A hard technical
+// barrier would need an AST-based lint rule, which is disproportionate
+// engineering for a function with zero production callers today. This gate
+// is a deliberate tripwire against the realistic case (a future ticket adding
+// a direct call site), not a claim of airtight enforcement.
 //
 // A future PR that legitimately resolves SAT-478 and wires revokeKey in must
-// update or remove this check as a deliberate, visible part of that change --
-// that's the point: it forces the decision to be conscious, not accidental.
+// update this check as a deliberate, visible part of that change -- that's
+// the point: it forces the decision to be conscious, not accidental.
 // ---------------------------------------------------------------------------
 {
-  const scanDirForRevokeKey = (dirPath) => {
+  const SKIP_DIRS = new Set(['test', 'node_modules', '.git']);
+  const scanRepoForRevokeKey = (dirPath) => {
     if (!fs.existsSync(dirPath)) return [];
     const hits = [];
     for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-      const full = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
-        hits.push(...scanDirForRevokeKey(full));
+        if (SKIP_DIRS.has(entry.name)) continue;
+        hits.push(...scanRepoForRevokeKey(path.join(dirPath, entry.name)));
       } else if (entry.isFile() && (entry.name.endsWith('.mjs') || entry.name.endsWith('.js'))) {
+        const full = path.join(dirPath, entry.name);
+        if (full === path.join(ROOT, 'core', 'key-store.mjs')) continue; // definition itself
         const content = fs.readFileSync(full, 'utf8');
         if (content.includes('revokeKey')) hits.push(full);
       }
@@ -526,15 +539,10 @@ const baseManifest = makeIntentManifest({
     return hits;
   };
 
-  const binHits = scanDirForRevokeKey(path.join(ROOT, 'bin'));
-  const mcpHits = scanDirForRevokeKey(path.join(ROOT, 'mcp'));
-
-  ok('SAT-478 gate: revokeKey is not referenced anywhere under bin/',
-    binHits.length === 0,
-    binHits.length ? binHits.join(', ') : '');
-  ok('SAT-478 gate: revokeKey is not referenced anywhere under mcp/',
-    mcpHits.length === 0,
-    mcpHits.length ? mcpHits.join(', ') : '');
+  const hits = scanRepoForRevokeKey(ROOT);
+  ok('SAT-478 gate: revokeKey is not referenced anywhere outside core/key-store.mjs and test/ (whole-repo scan)',
+    hits.length === 0,
+    hits.length ? hits.join(', ') : '');
 }
 
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));

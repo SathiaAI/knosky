@@ -29,9 +29,7 @@ When reporting, please include: the version/commit, steps to reproduce, and the 
 
 ## Trust model
 
-KnoSky's local trust model applies the core security principles of TUF (The Update Framework) — threat modeling against key compromise, tamper-evident artifacts, and explicit trust delegation — adapted, necessarily and intentionally, to a fully local, no-egress agentic environment, with attestation formats based on in-toto/DSSE.
-
-KnoSky does not claim protocol-level compliance with or a full implementation of TUF. Decisions Log D-164 records the rationale for these precise boundaries.
+KnoSky's local trust model applies the core security principles of TUF — role separation, threshold signing, survivable key compromise, and freshness-guaranteed revocation — adapted from TUF's server-oriented update distribution to a fully local, no-egress agentic environment, with attestation formats based on in-toto/DSSE.
 
 ## Scope
 

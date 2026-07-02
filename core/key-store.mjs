@@ -118,8 +118,50 @@ export function rotateKey(ks) {
 }
 
 // ---------------------------------------------------------------------------
-// revokeKey
+// revokeKey / makeRevocationApproval
 // ---------------------------------------------------------------------------
+
+/**
+ * The canonical payload that approval signers HMAC to authorise a revocation.
+ * Keys are sorted alphabetically (matching {@link hmacPayload}).
+ *
+ * @param {string} targetKeyId
+ * @returns {{ action: string, target_key_id: string }}
+ */
+function revocationPayload(targetKeyId) {
+  // Return in key-sorted order so hmacPayload produces a deterministic digest.
+  return { action: 'revoke_key', target_key_id: targetKeyId };
+}
+
+/**
+ * Produce a revocation-approval token signed by `signingKeyId`.
+ *
+ * The token is an `{ key_id, sig }` object that can be collected from multiple
+ * non-revoked keys and passed as the `approvals` array to {@link revokeKey}
+ * to satisfy the quorum requirement.
+ *
+ * Throws if `signingKeyId` is unknown, already revoked, or equal to
+ * `targetKeyId` (a key may not approve its own revocation).
+ *
+ * @param {{ keys: Map<string,object> }} ks
+ * @param {string} signingKeyId
+ * @param {string} targetKeyId
+ * @returns {{ key_id: string, sig: string }}
+ */
+export function makeRevocationApproval(ks, signingKeyId, targetKeyId) {
+  if (signingKeyId === targetKeyId) {
+    throw new Error('makeRevocationApproval: signing key and target key must differ');
+  }
+  const entry = ks.keys.get(signingKeyId);
+  if (!entry) {
+    throw new Error(`makeRevocationApproval: unknown key_id ${JSON.stringify(signingKeyId)}`);
+  }
+  if (entry.status === 'revoked') {
+    throw new Error(`makeRevocationApproval: signing key ${JSON.stringify(signingKeyId)} is revoked`);
+  }
+  const sig = hmacPayload(entry.raw, revocationPayload(targetKeyId));
+  return { key_id: signingKeyId, sig };
+}
 
 /**
  * Revoke a key by id.
@@ -132,17 +174,74 @@ export function rotateKey(ks) {
  * If the revoked key was the active signing key, `activeKeyId` is cleared to
  * `null`; callers must {@link rotateKey} to obtain a new active key.
  *
- * Throws if `keyId` is not present in the store.
+ * **Authorization / quorum gate (SAT-472)**
+ *
+ * Let `M` be the number of non-revoked keys other than `keyId`.  The
+ * required quorum is `Math.floor(M / 2) + 1` (strict majority of peers).
+ * When `M === 0` (the target is the only remaining key) no approvals are
+ * needed.  Each approval in the `approvals` array must be a valid
+ * {@link makeRevocationApproval} token signed by a distinct, non-revoked key
+ * that is not `keyId` itself.
+ *
+ * This ensures a single compromised key cannot unilaterally revoke all
+ * others: it can only contribute one approval, which is always less than
+ * the strict majority needed when `M >= 2`.
+ *
+ * Throws if `keyId` is not present in the store or if the quorum is not met.
  *
  * @param {{ keys: Map<string,object>, activeKeyId: string|null }} ks
  * @param {string} keyId
+ * @param {{ key_id: string, sig: string }[]} [approvals=[]]
  */
-export function revokeKey(ks, keyId) {
+export function revokeKey(ks, keyId, approvals = []) {
   if (!ks.keys.has(keyId)) {
     throw new Error(`revokeKey: unknown key_id ${JSON.stringify(keyId)}`);
   }
   const entry = ks.keys.get(keyId);
   if (entry.status === 'revoked') return; // idempotent
+
+  // Count non-revoked peer keys (all keys except the revocation target).
+  const peers = [...ks.keys.values()].filter(
+    e => e.key_id !== keyId && e.status !== 'revoked',
+  );
+  const required = peers.length > 0 ? Math.floor(peers.length / 2) + 1 : 0;
+
+  if (required > 0) {
+    // Validate each approval token over the canonical revocation payload.
+    const payload = revocationPayload(keyId);
+    const seen = new Set();
+    let valid = 0;
+
+    for (const approval of approvals) {
+      const { key_id: aKeyId, sig } = approval ?? {};
+      if (!aKeyId || !sig) continue;
+      if (aKeyId === keyId) continue;      // target cannot self-approve
+      if (seen.has(aKeyId)) continue;      // deduplicate per signer
+
+      const aEntry = ks.keys.get(aKeyId);
+      if (!aEntry || aEntry.status === 'revoked') continue;
+
+      const expected = hmacPayload(aEntry.raw, payload);
+      if (typeof sig !== 'string' || sig.length !== expected.length) continue;
+
+      let match = false;
+      try {
+        match = timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(sig, 'hex'));
+      } catch { match = false; }
+
+      if (match) {
+        seen.add(aKeyId);
+        valid++;
+      }
+    }
+
+    if (valid < required) {
+      throw new Error(
+        `revokeKey: quorum not met — ${required} approval(s) required from peer keys, got ${valid}`,
+      );
+    }
+  }
+
   entry.status = 'revoked';
   // If the active key was just revoked, clear the active pointer.
   if (ks.activeKeyId === keyId) ks.activeKeyId = null;

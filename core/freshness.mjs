@@ -1,16 +1,20 @@
-// KnoSky ledger-anchored freshness attestation (SAT-444).
+// KnoSky ledger-anchored freshness attestation (SAT-444, SAT-474).
 //
 // Closes the clock-skew / key-resurrection gap by basing freshness on the
 // repository's commit count rather than wall-clock time.  A `ledger_seq`
 // is a monotone integer — the number of commits reachable from HEAD —
 // which cannot be fabricated by adjusting the system clock and can only
 // decrease when history is rewritten (the ledger-truncation attack caught
-// by the high-water-mark guard below).
+// by the high-water-mark guard in core/ledger.mjs).
 //
-// Depends on the high-water-mark guard (V13) to detect truncation.
+// SAT-474: validateFreshnessWithHwm() routes through the *persisted*
+// checkAndAdvance() guard (core/ledger.mjs) so that the rollback defence
+// survives process restarts.  validateFreshness() is retained for callers
+// that manage their own in-memory lastSeq (e.g. protocol-spec validation).
 // Pure Node stdlib, ESM — no third-party dependencies.
 
 import { execFileSync } from 'node:child_process';
+import { checkAndAdvance } from './ledger.mjs';
 
 // ---------------------------------------------------------------------------
 // extractLedgerSeq — read the ledger_seq stored in a city envelope
@@ -140,6 +144,47 @@ export function validateFreshness(artifact, lastSeq = null) {
   const hwm = checkHighWaterMark(lastSeq, seq);
   if (!hwm.ok) {
     errors.push(hwm.reason);
+  }
+
+  return { ok: errors.length === 0, ledger_seq: seq, errors };
+}
+
+// ---------------------------------------------------------------------------
+// validateFreshnessWithHwm — persisted-HWM variant (SAT-474)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate freshness through the **persisted** high-water-mark guard
+ * (`core/ledger.mjs` `checkAndAdvance`).
+ *
+ * Unlike `validateFreshness`, this function reads and updates the HWM from
+ * `hwmPath` on disk, so the rollback defence is durable across process
+ * restarts.  Callers that previously maintained an in-memory `lastSeq` and
+ * passed it to `validateFreshness` should migrate to this function and a
+ * stable `hwmPath` in their data directory.
+ *
+ * Semantics of the persisted guard (from `checkAndAdvance`):
+ *   - seq STRICTLY LESS than HWM → rejected (anti-truncation guard)
+ *   - seq EQUAL to HWM           → accepted (idempotent replay)
+ *   - seq GREATER than HWM       → accepted and HWM advanced
+ *
+ * @param {object} artifact  City envelope or protocol artifact.
+ * @param {string} hwmPath   Path to the independently-persisted HWM file.
+ * @returns {{ ok: boolean, ledger_seq: number|null, errors: string[] }}
+ */
+export function validateFreshnessWithHwm(artifact, hwmPath) {
+  const errors = [];
+  const seq = extractLedgerSeq(artifact);
+
+  if (seq === null) {
+    errors.push('ledger_seq is missing or not a non-negative integer');
+    // Cannot call checkAndAdvance with a null seq — return early.
+    return { ok: false, ledger_seq: null, errors };
+  }
+
+  const result = checkAndAdvance(seq, hwmPath);
+  if (!result.ok) {
+    errors.push(result.error);
   }
 
   return { ok: errors.length === 0, ledger_seq: seq, errors };

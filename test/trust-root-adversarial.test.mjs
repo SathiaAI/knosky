@@ -1,10 +1,11 @@
 // KnoSky trust-root / clock / ledger adversarial tests (SAT-452).
 //
 // This file completes the D-164 trust-root adversarial coverage by filling in
-// the scenarios not yet addressed by the three targeted sub-stories:
+// the scenarios not yet addressed by the four targeted sub-stories:
 //
-//   SAT-476 (HWM-file-deletion bypass)  → ledger.test.mjs section (k)      [D-168]
-//   SAT-475 (2-key quorum degenerate)   → key-store-quorum-redteam.mjs      [D-167]
+//   SAT-476 (HWM-file-deletion bypass)      → ledger.test.mjs section (k)   [D-168]
+//   SAT-475 (2-key quorum degenerate)        → key-store-quorum-redteam.mjs  [D-167]
+//   SAT-477 (M=0 sole-key self-revocation)  → key-store-quorum-redteam.mjs  [D-167]
 //
 // Rather than duplicate those tests, we import their fixture factories here as
 // cross-checks, then cover the remaining adversarial surface:
@@ -39,17 +40,19 @@ import {
   verifyManifest,
   getKey,
 } from '../core/key-store.mjs';
+import { make1KeyFixture } from './key-store-quorum-redteam.mjs';
 import { makeIntentManifest } from '../core/schema.mjs';
 
-// Cross-reference: the two merged sub-stories below are in-scope for SAT-452
-// coverage but their full test suites live in dedicated files:
+// Cross-reference: the sub-stories below are in-scope for SAT-452 coverage but
+// their full test suites live in dedicated files:
 //
 //   SAT-476 (D-168)  test/ledger.test.mjs            section (k)
-//   SAT-475 (D-167)  test/key-store-quorum-redteam.mjs
+//   SAT-475 (D-167)  test/key-store-quorum-redteam.mjs  RT-KS-001
+//   SAT-477 (D-167)  test/key-store-quorum-redteam.mjs  RT-KS-002
 //
 // We do NOT import those files (they call process.exit) — the REF-* sections
 // below document the cross-reference by re-exercising the same entry-points
-// directly, confirming the two scenarios remain live.
+// directly, confirming the scenarios remain live.
 
 let failures = 0;
 const ok = (name, cond, extra = '') => {
@@ -128,6 +131,34 @@ const baseManifest = makeIntentManifest({
     })());
   ok('REF-SAT-475: target still non-revoked after single-peer attempt',
     ks3.keys.get(t3)?.status !== 'revoked');
+}
+
+// ---------------------------------------------------------------------------
+// REF-SAT-477  M=0 sole-key self-revocation — cross-reference smoke check
+//
+// The full scenario lives in key-store-quorum-redteam.mjs (RT-KS-002, D-167).
+// When a store is driven down to exactly 1 non-revoked key via prior legitimate
+// revocations, M=0 → required=0. The sole key self-revokes with zero approvals.
+// This is INTENTIONAL design (self-wipe, not a bypass; D-167 / SAT-472 comment).
+//
+// Reuses make1KeyFixture() from key-store-quorum-redteam.mjs (Architect review,
+// PR #42) instead of reconstructing the same 1-key setup inline — the fixture
+// was already exported for exactly this kind of cross-file reuse.
+// ---------------------------------------------------------------------------
+{
+  const { ks: ks1, soleKeyId: sole } = make1KeyFixture();
+
+  const nonRevokedPeers = [...ks1.keys.values()].filter(
+    e => e.key_id !== sole && e.status !== 'revoked',
+  );
+  ok('REF-SAT-477: sole-key store has 0 non-revoked peers (M=0)',
+    nonRevokedPeers.length === 0);
+  ok('REF-SAT-477: M=0 self-revocation with zero approvals SUCCEEDS (documented design)',
+    (() => { try { revokeKey(ks1, sole, []); return true; } catch { return false; } })());
+  ok('REF-SAT-477: sole key is "revoked" after self-revoke',
+    ks1.keys.get(sole)?.status === 'revoked');
+  ok('REF-SAT-477: store is fully exhausted after self-revoke (activeKeyId === null)',
+    ks1.activeKeyId === null);
 }
 
 // ---------------------------------------------------------------------------

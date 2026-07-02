@@ -14,4 +14,10 @@ jobs:
           node-version: 20
       - run: npm ci || npm install
       - run: npm audit --audit-level=high
-      - run: node test/security-fixtures.mjs
+      - name: Run the full test suite
+        run: |
+          set -e
+          for f in test/*.mjs; do
+            echo "== $f =="
+            node "$f"
+          done

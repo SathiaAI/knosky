@@ -1,14 +1,29 @@
-// KnoSky red-team scenario RT-KS-001: 2-key quorum degenerate case (SAT-475).
-// Documents and pins the confirmed structural property of core/key-store.mjs:
-// when a store holds exactly 2 non-revoked keys, the quorum formula
-// (Math.floor(peers.length / 2) + 1) reduces to 1 — a single peer key alone
-// can revoke the target. This is EXPECTED, ACCEPTED behaviour (Decision D-163);
-// pre-classifying it prevents red-teamers from re-deriving it as a novel P0 and
-// guards against regression to something *worse* (0-approval takeover).
+// KnoSky red-team scenarios RT-KS-001 / RT-KS-002: quorum degenerate cases.
+//
+// RT-KS-001 (SAT-475): 2-key quorum degenerate case.
+//   Documents and pins the confirmed structural property of core/key-store.mjs:
+//   when a store holds exactly 2 non-revoked keys, the quorum formula
+//   (Math.floor(peers.length / 2) + 1) reduces to 1 — a single peer key alone
+//   can revoke the target. This is EXPECTED, ACCEPTED behaviour (Decision D-163);
+//   pre-classifying it prevents red-teamers from re-deriving it as a novel P0 and
+//   guards against regression to something *worse* (0-approval takeover).
+//
+// RT-KS-002 (SAT-477): M=0 quorum — sole-remaining-key self-revocation.
+//   When all peer keys have been legitimately revoked and exactly 1 non-revoked
+//   key remains, M (peer count) is 0, so required = 0, and the sole key can
+//   self-revoke with zero approvals. This is EXPECTED, INTENTIONAL behaviour
+//   (Decision D-167): requiring an approval that structurally cannot exist would
+//   make a compromised last key permanently irrevocable, which is a worse outcome.
+//   This is a self-wipe, not a third-party bypass — there is no peer whose
+//   consent could meaningfully be required. Ref: SAT-472 doc comment.
 //
 // Run:     node test/key-store-quorum-redteam.mjs
 // Feeds:   SAT-437 (red-team suite), SAT-438 (synthetic data / simulation)
-// Exports: make2KeyFixture, make3KeyFixture
+// Exports: make1KeyFixture, make2KeyFixture, make3KeyFixture
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   createKeyStore,
@@ -19,6 +34,18 @@ import {
   verifyManifest,
 } from '../core/key-store.mjs';
 import { makeIntentManifest } from '../core/schema.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// ---------------------------------------------------------------------------
+// Module-level minimal manifest (used by make1KeyFixture; kept here so the
+// exported factories are self-contained and importable without side-effects).
+// ---------------------------------------------------------------------------
+
+const baseManifestForFixture = makeIntentManifest({
+  paths: [{ path: 'core/key-store.mjs', sha256: 'abc123' }],
+  secret_scan: { status: 'clean' },
+});
 
 // ---------------------------------------------------------------------------
 // Exported fixture factories
@@ -34,6 +61,44 @@ import { makeIntentManifest } from '../core/schema.mjs';
 //   forgedApproval  – structurally valid token whose sig bytes are garbage
 //   dupApproval     – copy of the first legit approval (duplicate-signer probe)
 // ---------------------------------------------------------------------------
+
+/**
+ * Build a 1-key store: the sole non-revoked key is the revocation target.
+ * N=1, M=0 → required = 0. The key self-revokes with zero approvals.
+ * This is the intentional self-wipe path (SAT-477, D-167 / SAT-472 doc comment).
+ *
+ * The store is constructed by creating a 3-key store and then legitimately
+ * revoking 2 of the 3 keys down to the sole survivor, which mirrors a real
+ * deployment lifecycle (prior revocations drove the count to 1).
+ *
+ * @returns {{
+ *   ks: object,
+ *   soleKeyId: string,
+ *   signedBeforeRevoke: object,
+ * }}
+ */
+export function make1KeyFixture() {
+  // Start with 3 keys so we can exercise legitimate prior revocations.
+  const ks = createKeyStore();
+  const k1 = ks.activeKeyId;               // will be revoked first
+  const k2 = rotateKey(ks);               // will be revoked second
+  const k3 = rotateKey(ks);               // sole survivor → self-revocation target
+
+  // Sign a manifest before revocations begin so we can confirm rejection later.
+  const signedBeforeRevoke = signManifest(ks, baseManifestForFixture);
+
+  // Legitimate revocation of k1: peers are k2, k3 → M=2, quorum=2.
+  const a2k1 = makeRevocationApproval(ks, k2, k1);
+  const a3k1 = makeRevocationApproval(ks, k3, k1);
+  revokeKey(ks, k1, [a2k1, a3k1]);
+
+  // Legitimate revocation of k2: only k3 remains as peer → M=1, quorum=1.
+  const a3k2 = makeRevocationApproval(ks, k3, k2);
+  revokeKey(ks, k2, [a3k2]);
+
+  // Now ks has exactly 1 non-revoked key: k3.  M=0, required=0.
+  return { ks, soleKeyId: k3, signedBeforeRevoke };
+}
 
 /**
  * Build a 2-key store: target + 1 peer.
@@ -282,6 +347,130 @@ const baseManifest = makeIntentManifest({
   ok('RT-KS-001-I N=3: [forged, dup-of-peer1] CANNOT revoke', threwForgedDupN3);
 }
 
+// ===========================================================================
+// RT-KS-002  M=0 quorum — sole-remaining-key self-revocation (SAT-477)
+//
+// When a store has been reduced to exactly 1 non-revoked key via prior
+// legitimate revocations, M=0 → required=0. The sole key can self-revoke
+// with zero approvals. This is EXPECTED, INTENTIONAL design (D-167 / SAT-472):
+// requiring a peer approval that cannot exist would permanently strand a
+// compromised last key. The M=0 path is a self-wipe, not an auth bypass.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// RT-KS-002-A  N=1 (sole survivor): self-revocation with ZERO approvals SUCCEEDS
+//
+// This is the core documented behaviour. The test confirms:
+//   1. revokeKey(ks, soleKeyId, []) does not throw with M=0
+//   2. The sole key is marked "revoked" after the call
+//   3. activeKeyId is cleared to null (no active key remains)
+//   4. Manifests signed before revocation are now rejected (key_revoked)
+// ---------------------------------------------------------------------------
+{
+  const { ks, soleKeyId, signedBeforeRevoke } = make1KeyFixture();
+
+  // Confirm we are in the N=1 state with 0 non-revoked peers.
+  const nonRevokedPeers = [...ks.keys.values()].filter(
+    e => e.key_id !== soleKeyId && e.status !== 'revoked',
+  );
+  ok('RT-KS-002-A N=1: store has exactly 0 non-revoked peers before self-revoke',
+    nonRevokedPeers.length === 0);
+
+  let selfRevokedOk = false;
+  try {
+    revokeKey(ks, soleKeyId, []);   // zero approvals required at M=0
+    selfRevokedOk = true;
+  } catch { /* must not throw */ }
+
+  ok('RT-KS-002-A N=1: self-revocation with zero approvals SUCCEEDS (M=0, EXPECTED)',
+    selfRevokedOk);
+  ok('RT-KS-002-A N=1: sole key status is "revoked" after self-revoke',
+    ks.keys.get(soleKeyId)?.status === 'revoked');
+  ok('RT-KS-002-A N=1: activeKeyId is null after sole-key revocation (store exhausted)',
+    ks.activeKeyId === null);
+
+  // Manifests signed before self-revocation must now be rejected.
+  const vr = verifyManifest(ks, signedBeforeRevoke);
+  ok('RT-KS-002-A N=1: manifest signed before self-revoke is now rejected',
+    vr.ok === false);
+  ok('RT-KS-002-A N=1: rejection reason is "key_revoked"',
+    vr.reason === 'key_revoked', JSON.stringify(vr));
+}
+
+// ---------------------------------------------------------------------------
+// RT-KS-002-B  N=1: self-revocation is idempotent
+//
+// Revoking the already-revoked key a second time must be a no-op (no throw).
+// Matches the general idempotency contract from core/key-store.mjs.
+// ---------------------------------------------------------------------------
+{
+  const { ks, soleKeyId } = make1KeyFixture();
+  revokeKey(ks, soleKeyId, []);   // first call
+
+  let idempotentOk = false;
+  try { revokeKey(ks, soleKeyId, []); idempotentOk = true; } catch { /* must not throw */ }
+  ok('RT-KS-002-B N=1: revoking the already-revoked sole key is a no-op (idempotent)',
+    idempotentOk);
+  ok('RT-KS-002-B N=1: status remains "revoked" after second call',
+    ks.keys.get(soleKeyId)?.status === 'revoked');
+}
+
+// ---------------------------------------------------------------------------
+// RT-KS-002-C  N=1: a forged/garbage approval still succeeds (M=0 branch)
+//
+// At M=0 the quorum check is entirely bypassed (required=0). Passing garbage
+// tokens must not PREVENT revocation (they are simply ignored). This guards
+// against a future regression where forged-token rejection inadvertently
+// raises the effective required count above 0 at M=0.
+// ---------------------------------------------------------------------------
+{
+  const { ks, soleKeyId } = make1KeyFixture();
+  const garbage = { key_id: soleKeyId, sig: '0'.repeat(64) };
+
+  let revokedWithGarbage = false;
+  try {
+    revokeKey(ks, soleKeyId, [garbage]);
+    revokedWithGarbage = true;
+  } catch { /* must not throw */ }
+  ok('RT-KS-002-C N=1: passing garbage approvals at M=0 still SUCCEEDS (quorum=0, bypass)',
+    revokedWithGarbage);
+  ok('RT-KS-002-C N=1: sole key is "revoked" even when garbage approvals were passed',
+    ks.keys.get(soleKeyId)?.status === 'revoked');
+}
+
+// ---------------------------------------------------------------------------
+// RT-KS-002-D  N=1: the transition from N=2 to N=1 resets the quorum requirement
+//
+// Demonstrates the full lifecycle: start at N=2 (quorum=1), legitimately revoke
+// one key so N=1 (quorum=0), then self-revoke the survivor with zero approvals.
+// This is the documented "last-key" handoff path.
+// ---------------------------------------------------------------------------
+{
+  const { ks, targetKeyId, peerKeyId, legitApproval } = make2KeyFixture();
+
+  // Step 1: legitimate revocation at N=2 (quorum=1, peer approves)
+  revokeKey(ks, targetKeyId, [legitApproval]);
+  ok('RT-KS-002-D step-1: N=2→1 transition — peer-approved revocation sets N=1',
+    ks.keys.get(targetKeyId)?.status === 'revoked');
+
+  // Confirm peer is now the sole non-revoked key (M=0 for any revocation of peerKeyId).
+  const peersOfPeer = [...ks.keys.values()].filter(
+    e => e.key_id !== peerKeyId && e.status !== 'revoked',
+  );
+  ok('RT-KS-002-D step-1: no non-revoked peers remain for peerKeyId after transition',
+    peersOfPeer.length === 0);
+
+  // Step 2: sole survivor (peerKeyId) self-revokes with zero approvals.
+  let finalRevokeOk = false;
+  try { revokeKey(ks, peerKeyId, []); finalRevokeOk = true; } catch { /* must not throw */ }
+  ok('RT-KS-002-D step-2: sole survivor self-revokes with zero approvals SUCCEEDS (EXPECTED)',
+    finalRevokeOk);
+  ok('RT-KS-002-D step-2: sole survivor is "revoked" after self-revoke',
+    ks.keys.get(peerKeyId)?.status === 'revoked');
+  ok('RT-KS-002-D step-2: store is fully exhausted — activeKeyId is null',
+    ks.activeKeyId === null);
+}
+
 // ---------------------------------------------------------------------------
 // RT-KS-001-J  Quorum arithmetic boundary table
 //
@@ -303,6 +492,61 @@ const baseManifest = makeIntentManifest({
     ok(`RT-KS-001-J quorum math: M=${M} peers → required=${computed} (expected ${expected})`,
       computed === expected);
   }
+}
+
+// ---------------------------------------------------------------------------
+// SAT-478 gate  revokeKey must remain unreachable from any non-test surface
+//
+// SAT-478 (SECURITY.md, D-167): revokeKey() at M=0 authorizes by state, not
+// caller identity -- any caller can wipe the sole remaining key with zero
+// approvals and zero proof of key possession. The ONLY current mitigation is
+// that revokeKey has no reachable call site outside core/key-store.mjs and
+// test/. This check enforces that in code, not just in a Linear ticket: if a
+// future PR wires revokeKey into ANY production surface -- bin/, mcp/, or a
+// not-yet-existing directory (lib/, plugins/, server/, etc.) -- without first
+// resolving SAT-478, this test fails loudly instead of silently shipping an
+// exploitable path. Whole-repo scan (not just bin/+mcp/) so a brand-new
+// directory can't quietly bypass it (Architect review, PR #42 re-review).
+//
+// Known limitation, stated plainly rather than overclaimed: this is a text
+// scan, not static analysis -- it does not catch an aliased reference
+// (`const r = revokeKey; r(...)`) or a dynamic re-export. A hard technical
+// barrier would need an AST-based lint rule, which is disproportionate
+// engineering for a function with zero production callers today. This gate
+// is a deliberate tripwire against the realistic case (a future ticket adding
+// a direct call site), not a claim of airtight enforcement.
+//
+// A future PR that legitimately resolves SAT-478 and wires revokeKey in must
+// update this check as a deliberate, visible part of that change -- that's
+// the point: it forces the decision to be conscious, not accidental.
+// ---------------------------------------------------------------------------
+{
+  // Full JS/TS family, not just .mjs/.js -- none of these exist in the repo
+  // today, but the scan shouldn't silently miss one if that changes
+  // (Architect review, PR #42 round 3).
+  const SCAN_EXTENSIONS = ['.mjs', '.cjs', '.js', '.mts', '.cts', '.ts'];
+  const SKIP_DIRS = new Set(['test', 'node_modules', '.git']);
+  const scanRepoForRevokeKey = (dirPath) => {
+    if (!fs.existsSync(dirPath)) return [];
+    const hits = [];
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        hits.push(...scanRepoForRevokeKey(path.join(dirPath, entry.name)));
+      } else if (entry.isFile() && SCAN_EXTENSIONS.some(ext => entry.name.endsWith(ext))) {
+        const full = path.join(dirPath, entry.name);
+        if (full === path.join(ROOT, 'core', 'key-store.mjs')) continue; // definition itself
+        const content = fs.readFileSync(full, 'utf8');
+        if (content.includes('revokeKey')) hits.push(full);
+      }
+    }
+    return hits;
+  };
+
+  const hits = scanRepoForRevokeKey(ROOT);
+  ok('SAT-478 gate: revokeKey is not referenced anywhere outside core/key-store.mjs and test/ (whole-repo scan)',
+    hits.length === 0,
+    hits.length ? hits.join(', ') : '');
 }
 
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));

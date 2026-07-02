@@ -447,8 +447,13 @@ const baseManifest = makeIntentManifest({
   const entryDirectlyMutated = ks.keys.get(k1);
   entryDirectlyMutated.status = 'active';   // attacker with memory access does this
   const vrMutated = verifyManifest(ks, signed);
-  ok('TR-005-e: direct Map mutation can restore verifiability (in-process memory access required)',
-    vrMutated.ok === true || vrMutated.ok === false /* either way: documents the behavior */);
+  // Documents a known, accepted boundary (same class as D-167/D-168): direct
+  // in-process memory access to the key-store Map bypasses every accessor,
+  // not just revocation — asserting the SPECIFIC outcome (not a tautology)
+  // means a future hardening (e.g. Object.freeze on entries) would correctly
+  // flip this test, prompting an update rather than silently staying green.
+  ok('TR-005-e: direct Map mutation DOES restore verifiability (documented boundary, not a code path)',
+    vrMutated.ok === true);
   // Restore for clean state
   entryDirectlyMutated.status = 'revoked';
   ok('TR-005-e: after restoring revoked status, manifest is rejected again',
@@ -456,60 +461,54 @@ const baseManifest = makeIntentManifest({
 }
 
 // ---------------------------------------------------------------------------
-// TR-006  Large-integer ledger lockout probe
+// TR-006  Large-integer ledger lockout — FIXED (was a confirmed DoS)
 //
-// `Number.isInteger(1e100)` is `true`, so `checkAndAdvance(1e100, path) succeeds.
-// If an attacker can inject `ledger_seq: 1e100` into an accepted city snapshot,
-// the HWM advances to 1e100 — permanently locking out all future advances
-// because real git commit counts (MAX_SAFE_INTEGER ≈ 9×10¹⁵) are less than
-// 1e100.
-//
-// This is a structural DoS on the persisted guard, analogous to the HWM-file-
-// deletion bypass (SAT-476): it requires the attacker to control the indexed
-// city output.  There is no code fix at the guard layer — the guard correcty
-// enforces monotonicity once the lockout value is installed.
-//
-// This test documents and pins the confirmed behavior so that:
-//   (1) it is not re-derived as a novel finding by future red-teamers, and
-//   (2) a future upper-bound check in checkAndAdvance can be added safely
-//       (regression guard: if added, remove the "lockout confirmed" assertions).
+// Originally: `Number.isInteger(1e100)` is `true`, so `checkAndAdvance(1e100,
+// path)` succeeded, permanently locking the HWM guard (no real git commit
+// count could ever exceed it again). Fixed by rejecting any seq greater than
+// MAX_PLAUSIBLE_LEDGER_SEQ (1 billion — far beyond any real repo's commit
+// count, far below Number.MAX_SAFE_INTEGER's precision boundary) at both the
+// structural layer (extractLedgerSeq, core/freshness.mjs) and the persisted
+// guard itself (checkAndAdvance, core/ledger.mjs), independently, so the
+// fix holds even if one function is called without going through the other.
+// Note: this guard is not currently wired to any inbound/external artifact
+// path in the shipped CLI (verified: no caller outside core/ledger.mjs,
+// core/freshness.mjs, and tests) — so this was latent, not actively
+// exploitable today. Fixed proactively before any consumption path is wired
+// to it, per the same discipline that caught the HWM-deletion case (D-168).
 // ---------------------------------------------------------------------------
 {
   const p = hwmPath('tr-006-lockout');
 
-  // (a) Baseline: checkAndAdvance accepts 1e100 (it passes Number.isInteger)
+  // (a) checkAndAdvance now REJECTS implausibly large sequence numbers
   const rLarge = checkAndAdvance(1e100, p);
-  ok('TR-006-a: checkAndAdvance(1e100) is accepted (1e100 passes isInteger)',
-    rLarge.ok === true, JSON.stringify(rLarge));
-  ok('TR-006-a: HWM written as 1e100', readHwm(p) === 1e100);
+  ok('TR-006-a: checkAndAdvance(1e100) is now REJECTED (upper-bound guard)',
+    rLarge.ok === false, JSON.stringify(rLarge));
+  ok('TR-006-a: HWM was NOT advanced to 1e100 (still at initial 0)',
+    readHwm(p) === 0);
 
-  // (b) Lockout confirmed: MAX_SAFE_INTEGER < 1e100, so legitimate seqs are refused
-  const rMaxSafe = checkAndAdvance(Number.MAX_SAFE_INTEGER, p);
-  ok('TR-006-b: MAX_SAFE_INTEGER < 1e100 — legitimate seq refused after lockout injection',
-    rMaxSafe.ok === false, JSON.stringify(rMaxSafe));
-  ok('TR-006-b: refusal mentions anti-truncation (lockout enforced as normal HWM guard)',
-    rMaxSafe.error && rMaxSafe.error.includes('anti-truncation'));
+  // (b) A legitimate, realistic seq still works normally after the rejected attempt
+  const rMaxSafe = checkAndAdvance(500, p);
+  ok('TR-006-b: a realistic seq (500) is accepted normally after the rejected 1e100 attempt',
+    rMaxSafe.ok === true, JSON.stringify(rMaxSafe));
 
-  // (c) extractLedgerSeq also accepts 1e100 (same isInteger check)
-  ok('TR-006-c: extractLedgerSeq(1e100) returns 1e100 (passes structural validation)',
-    extractLedgerSeq({ ledger_seq: 1e100 }) === 1e100);
+  // (c) extractLedgerSeq now returns null for implausibly large values
+  //     (same contract as "missing/invalid" — the artifact fails structural validation)
+  ok('TR-006-c: extractLedgerSeq(1e100) now returns null (rejected, not passed through)',
+    extractLedgerSeq({ ledger_seq: 1e100 }) === null);
 
-  // (d) But MAX_SAFE_INTEGER + 1 is representable and also an integer (no safe overflow)
-  //     both values collapse to the same float: no crash, but note the precision loss.
-  const over = Number.MAX_SAFE_INTEGER + 1;
-  ok('TR-006-d: MAX_SAFE_INTEGER+1 is still an integer type (precision loss, not crash)',
-    Number.isInteger(over));
-  ok('TR-006-d: MAX_SAFE_INTEGER+1 and MAX_SAFE_INTEGER+2 are equal (float precision saturation)',
-    over === Number.MAX_SAFE_INTEGER + 2);
+  // (d) Values right at and just below the bound still work correctly
+  ok('TR-006-d: extractLedgerSeq at the exact bound (1_000_000_000) is accepted',
+    extractLedgerSeq({ ledger_seq: 1_000_000_000 }) === 1_000_000_000);
+  ok('TR-006-d: extractLedgerSeq just over the bound (1_000_000_001) is rejected',
+    extractLedgerSeq({ ledger_seq: 1_000_000_001 }) === null);
 
-  // (e) The freshness layer also accepts 1e100 (same extractLedgerSeq path)
+  // (e) The freshness layer rejects the oversized seq the same way a missing seq is rejected
   const rfLarge = validateFreshness({ ledger_seq: 1e100 }, null);
-  ok('TR-006-e: validateFreshness(ledger_seq=1e100, lastSeq=null) ok=true (first load)',
-    rfLarge.ok === true, JSON.stringify(rfLarge.errors));
-  // Subsequent load at a realistic seq
-  const rfAfterLarge = validateFreshness({ ledger_seq: 999 }, rfLarge.ledger_seq);
-  ok('TR-006-e: after accepting 1e100, validateFreshness(999) is refused (999 < 1e100)',
-    rfAfterLarge.ok === false);
+  ok('TR-006-e: validateFreshness(ledger_seq=1e100) ok=false (treated as missing/invalid)',
+    rfLarge.ok === false, JSON.stringify(rfLarge.errors));
+  ok('TR-006-e: error mentions ledger_seq (same message as a missing seq)',
+    rfLarge.errors.some(e => e.includes('ledger_seq')));
 }
 
 // ---------------------------------------------------------------------------

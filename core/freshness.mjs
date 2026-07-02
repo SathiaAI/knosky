@@ -20,9 +20,18 @@ import { checkAndAdvance } from './ledger.mjs';
 // extractLedgerSeq — read the ledger_seq stored in a city envelope
 // ---------------------------------------------------------------------------
 
+// Upper bound for a plausible ledger_seq (commit count). 1 billion is far
+// beyond any real git repo's commit count and far below Number.MAX_SAFE_INTEGER
+// (~9e15), so it rejects implausible/attacker-supplied values (e.g. 1e100)
+// with no precision-loss risk of its own. Hardening added after SAT-452's
+// red-team suite (TR-006) confirmed an unbounded seq permanently locks out
+// the persisted HWM guard (core/ledger.mjs checkAndAdvance) once accepted.
+export const MAX_PLAUSIBLE_LEDGER_SEQ = 1_000_000_000;
+
 /**
  * Extract the `ledger_seq` from a city envelope or any artifact that carries
- * one.  Returns null when absent or not a non-negative integer.
+ * one.  Returns null when absent, not a non-negative integer, or implausibly
+ * large (see MAX_PLAUSIBLE_LEDGER_SEQ).
  *
  * @param {object} obj  City envelope or comparable artifact object.
  * @returns {number|null}
@@ -31,6 +40,7 @@ export function extractLedgerSeq(obj) {
   if (!obj || typeof obj !== 'object') return null;
   const seq = obj.ledger_seq;
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) return null;
+  if (seq > MAX_PLAUSIBLE_LEDGER_SEQ) return null;
   return seq;
 }
 

@@ -33,6 +33,10 @@ KnoSky's local trust model applies the core security principles of TUF (The Upda
 
 KnoSky does not claim protocol-level compliance with or a full implementation of TUF. Decisions Log D-164 records the rationale for these precise boundaries.
 
+## Known boundary conditions
+
+**N=2 key-store quorum (D-163):** when a key store holds exactly 2 non-revoked keys, the revocation quorum formula (`Math.floor(peers/2)+1`) reduces to 1, meaning the sole peer key alone can revoke the other. This is mathematically unavoidable at N=2, is an accepted limitation (not a defect), and is explicitly exercised by red-team scenario RT-KS-001 (`test/key-store-quorum-redteam.mjs`). Deployments that require real threshold protection must maintain N≥3 non-revoked keys at all times.
+
 ## Scope
 
 In scope: injection in generated artifacts, secret leakage through projections, the local MCP server, and the indexer's privacy defaults. Out of scope: issues that require an attacker to already control your machine or your repository's contents with your knowledge.

@@ -142,7 +142,8 @@ export function validateRouteDoc(doc) {
     }
   }
 
-  if (typeof doc.confidence !== 'number' || doc.confidence < 0 || doc.confidence > 1) {
+  // Number.isFinite rejects NaN and ±Infinity; the range check then enforces [0, 1].
+  if (!Number.isFinite(doc.confidence) || doc.confidence < 0 || doc.confidence > 1) {
     errors.push(`confidence must be a number in [0, 1], got: ${JSON.stringify(doc.confidence)}`);
   }
 

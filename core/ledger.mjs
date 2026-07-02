@@ -14,6 +14,7 @@
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, openSync, fsyncSync, closeSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { MAX_PLAUSIBLE_LEDGER_SEQ } from './constants.mjs';
 
 // ---------------------------------------------------------------------------
 // HWM file I/O
@@ -107,22 +108,17 @@ export function writeHwm(hwmPath, seq) {
  * @param {string} hwmPath  Path to the independently-persisted HWM file.
  * @returns {{ ok: boolean, seq: number, hwm: number, error?: string }}
  */
-// Upper bound for a plausible ledger sequence (commit count). Kept in sync
-// with core/freshness.mjs's MAX_PLAUSIBLE_LEDGER_SEQ (not imported, to avoid
-// a circular dependency between the two modules — ledger.mjs stays
-// dependency-free per its own header comment). 1 billion is far beyond any
-// real git repo's commit count and far below Number.MAX_SAFE_INTEGER
-// (~9e15). Second layer of defense: enforced here too so checkAndAdvance is
-// safe even if called directly, not only via validateFreshnessWithHwm.
-const MAX_PLAUSIBLE_SEQ = 1_000_000_000;
-
+// Second layer of defense: enforced here too (not only in
+// core/freshness.mjs's extractLedgerSeq) so checkAndAdvance is safe even if
+// called directly. Imports the single source of truth from constants.mjs
+// (a dependency-free module) so the two layers cannot silently diverge.
 export function checkAndAdvance(seq, hwmPath) {
-  if (!Number.isInteger(seq) || seq < 0 || seq > MAX_PLAUSIBLE_SEQ) {
+  if (!Number.isInteger(seq) || seq < 0 || seq > MAX_PLAUSIBLE_LEDGER_SEQ) {
     return {
       ok: false,
       seq,
       hwm: -1,
-      error: `seq must be a non-negative integer no greater than ${MAX_PLAUSIBLE_SEQ}, got: ${JSON.stringify(seq)}`,
+      error: `seq must be a non-negative integer no greater than ${MAX_PLAUSIBLE_LEDGER_SEQ}, got: ${JSON.stringify(seq)}`,
     };
   }
 

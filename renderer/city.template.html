@@ -171,6 +171,27 @@
   let CITY={nodes:[],generated_at:""};
   let GD="";
   function hashCode(s){let h=2166136261;s=String(s);for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return (h>>>0);}
+
+  // ---------- LOD / clustering / viewport-culling / streaming (SAT-447) ----------
+  // Tier constants (mirror core/lod.mjs — kept inline so the renderer stays self-contained)
+  const LOD_FULL=0,LOD_SIMPLE=1,LOD_DOT=2,LOD_CLUSTER=3;
+  // Zoom thresholds: below each boundary the next LOD tier kicks in
+  const LOD_FULL_THRESH=0.35,LOD_SIMPLE_THRESH=0.12,LOD_DOT_THRESH=0.06;
+  // Streaming: repos with this many nodes get progressive OBJ population across rAF frames
+  const STREAM_THRESH=400,STREAM_BATCH=80;
+  function lodForZoom(z){if(z>=LOD_FULL_THRESH)return LOD_FULL;if(z>=LOD_SIMPLE_THRESH)return LOD_SIMPLE;if(z>=LOD_DOT_THRESH)return LOD_DOT;return LOD_CLUSTER;}
+  // Current-frame LOD tier + axis-aligned world-space clip rect (updated once per render)
+  let _lod=LOD_FULL,_clip={wx0:-1e9,wy0:-1e9,wx1:1e9,wy1:1e9};
+  function updateLodAndClip(){
+    _lod=lodForZoom(cam.zoom);
+    const pad=128;  // world-unit margin so tiles at the edge aren't clipped
+    _clip={wx0:(0-cam.x)/cam.zoom-pad,wy0:(0-cam.y)/cam.zoom-pad,
+           wx1:(innerWidth-cam.x)/cam.zoom+pad,wy1:(innerHeight-cam.y)/cam.zoom+pad};}
+  function inView(wx,wy){return wx>=_clip.wx0&&wx<=_clip.wx1&&wy>=_clip.wy0&&wy<=_clip.wy1;}
+  // District cluster descriptors — one entry per district, built at ingest time
+  let CLUSTERS=[];
+  function buildClustersNow(){CLUSTERS=[];const acc={};for(const n of NODES){const k=n.d;if(!acc[k])acc[k]={sumX:0,sumY:0,count:0};acc[k].sumX+=n.bx;acc[k].sumY+=n.by;acc[k].count++;}Object.keys(acc).forEach(k=>{const a=acc[k];const cfg=DCFG[k]||{name:k,color:'#7c83a3'};CLUSTERS.push({d:k,label:cfg.name,color:cfg.color,count:a.count,wx:a.sumX/a.count,wy:a.sumY/a.count});});}
+
   const TW=64,TH=32;
   // central relative-size system (multiples of a tile) — tune here to keep everything proportional
   const SCALE={building:1.5,tree:0.7,car:0.6,fountain:0.5,bench:0.34,lamp:0.62};
@@ -229,19 +250,43 @@
   const TOWER=[0,1,2,21,23],HOUSE=[16,18,17,19,20];
   let OBJ=[];
   let ROADS=[],roadSet=new Set();
+  // Streaming geometry build state: when the node count is large, OBJ is populated
+  // incrementally across animation frames so the page stays responsive.
+  let _streamPending=null,_streamDone=false;
+  function _applyNodeGeom(n){const h=hashCode(n.id);n.gx=n._gx;n.gy=n._gy;
+    n.scale=0.62+((h>>2)%36)/100;n.h=1+((h>>7)%6)+(((h>>11)%5===0)?3:0);n.bright=0.9+((h>>17)%20)/100;
+    const w=isoToWorld(n.gx,n.gy);n.bx=w.x;n.by=w.y;
+    const pool=n.kind==='decision'?TOWER:HOUSE;n.cell=pool[(h>>5)%pool.length];n.bscale=0.97+((h>>9)%10)/100;n.bv=(n.kind==='decision'?(h%6):6+(h%10));}
   function buildGeometry(){
     LAY=buildLayout(NODES);IB=LAY.IB;
-    NODES.forEach(n=>{const h=hashCode(n.id);n.gx=n._gx;n.gy=n._gy;
-      n.scale=0.62+((h>>2)%36)/100;n.h=1+((h>>7)%6)+(((h>>11)%5===0)?3:0);n.bright=0.9+((h>>17)%20)/100;
-      const w=isoToWorld(n.gx,n.gy);n.bx=w.x;n.by=w.y;
-      const pool=n.kind==='decision'?TOWER:HOUSE;n.cell=pool[(h>>5)%pool.length];n.bscale=0.97+((h>>9)%10)/100;n.bv=(n.kind==='decision'?(h%6):6+(h%10));});
-    OBJ=[];
-    NODES.forEach(n=>{if(n.gx!=null)OBJ.push({k:'b',gx:n.gx,gy:n.gy,n});});
-    TILES.forEach(t=>{if(t.type==='tree')OBJ.push({k:'t',gx:t.gx,gy:t.gy,seed:hashCode('t'+t.gx+'_'+t.gy)});});
-    PROPS.forEach(p=>OBJ.push({k:'p',gx:p.gx,gy:p.gy,type:p.type}));
-    OBJ.sort((a,b)=>(a.gx+a.gy)-(b.gx+b.gy)||a.gx-b.gx);
     ROADS=TILES.filter(t=>t.type==='road');roadSet=new Set(ROADS.map(t=>t.gx+","+t.gy));
-  }
+    // Always apply geometry attributes synchronously so bx/by are ready for clustering
+    NODES.forEach(_applyNodeGeom);
+    if(NODES.length>=STREAM_THRESH){
+      // Large repo: populate OBJ skeleton synchronously (buildings only) so first frames
+      // can render clusters + initial buildings, then stream trees/props over rAF batches.
+      OBJ=[];
+      NODES.forEach(n=>{if(n.gx!=null)OBJ.push({k:'b',gx:n.gx,gy:n.gy,n});});
+      OBJ.sort((a,b)=>(a.gx+a.gy)-(b.gx+b.gy)||a.gx-b.gx);
+      // Queue tree/prop batches for streaming
+      const extras=[];
+      TILES.forEach(t=>{if(t.type==='tree')extras.push({k:'t',gx:t.gx,gy:t.gy,seed:hashCode('t'+t.gx+'_'+t.gy)});});
+      PROPS.forEach(p=>extras.push({k:'p',gx:p.gx,gy:p.gy,type:p.type}));
+      _streamPending=extras;_streamDone=false;
+      _scheduleStream();
+    }else{
+      OBJ=[];
+      NODES.forEach(n=>{if(n.gx!=null)OBJ.push({k:'b',gx:n.gx,gy:n.gy,n});});
+      TILES.forEach(t=>{if(t.type==='tree')OBJ.push({k:'t',gx:t.gx,gy:t.gy,seed:hashCode('t'+t.gx+'_'+t.gy)});});
+      PROPS.forEach(p=>OBJ.push({k:'p',gx:p.gx,gy:p.gy,type:p.type}));
+      OBJ.sort((a,b)=>(a.gx+a.gy)-(b.gx+b.gy)||a.gx-b.gx);
+      _streamPending=null;_streamDone=true;}}
+  function _scheduleStream(){if(!_streamPending||!_streamPending.length){_streamDone=true;return;}
+    requestAnimationFrame(()=>{if(!_streamPending)return;
+      const batch=_streamPending.splice(0,STREAM_BATCH);
+      for(const o of batch)OBJ.push(o);
+      OBJ.sort((a,b)=>(a.gx+a.gy)-(b.gx+b.gy)||a.gx-b.gx);
+      if(_streamPending.length)_scheduleStream();else{_streamDone=true;_streamPending=null;}});}
   function roadNbrs(gx,gy){const o=[];[[1,0],[-1,0],[0,1],[0,-1]].forEach(d=>{if(roadSet.has((gx+d[0])+","+(gy+d[1])))o.push(d);});return o;}
 
   // ---------- tree sprite-sheet constants (legacy 7.5MB sheet fallback removed; dedicated trees.png is the live path) ----------
@@ -412,7 +457,7 @@
 
   // ---------- ground ----------
   const GRASS="#3c6a3a";
-  function drawGround(){for(const t of TILES){const w=isoToWorld(t.gx,t.gy);diamondPath(w.x,w.y,TW/2,TH/2);let col;
+  function drawGround(){for(const t of TILES){const w=isoToWorld(t.gx,t.gy);if(!inView(w.x,w.y))continue;diamondPath(w.x,w.y,TW/2,TH/2);let col;
       if(t.type==='road')col=PAL.night?[26,27,38]:[64,66,76];
       else if(t.type==='park')col=PAL.night?[54,60,44]:[150,156,118];
       else if(t.type==='plaza')col=PAL.night?[64,61,51]:[120,114,92];
@@ -426,7 +471,7 @@
         if(vr){ctx.moveTo(w.x-TW/4,w.y+TH/4);ctx.lineTo(w.x+TW/4,w.y-TH/4);}
         ctx.stroke();ctx.setLineDash([]);}
       }}
-  function drawShadows(){ctx.fillStyle="rgba(0,0,0,.22)";for(const o of OBJ){if(o.k!=='b')continue;const n=o.n;if(filteredHidden.has(n.id))continue;const w=isoToWorld(n.gx,n.gy);diamondPath(w.x+8,w.y+5,TW*0.46*n.bscale,TH*0.46*n.bscale);ctx.fill();}}
+  function drawShadows(){if(_lod>=LOD_SIMPLE)return;ctx.fillStyle="rgba(0,0,0,.22)";for(const o of OBJ){if(o.k!=='b')continue;const n=o.n;if(filteredHidden.has(n.id))continue;const w=isoToWorld(n.gx,n.gy);if(!inView(w.x,w.y))continue;diamondPath(w.x+8,w.y+5,TW*0.46*n.bscale,TH*0.46*n.bscale);ctx.fill();}}
 
   // ---------- buildings (sprite blit, day/night/dim, + vector fallback) ----------
   // Legacy raster-sprite path (unused in the default Kenney CC0 / --vector modes); bottom-anchored to the tile.
@@ -521,7 +566,9 @@
 
   // ---------- churn heat: ground glow under recently-changed files (D-155, file-level metadata only) ----------
   function drawChurn(){
+    if(_lod>=LOD_SIMPLE)return;  // skip at low zoom — churn glow is too small to read
     for(const n of NODES){ const ch=n.churn; if(!ch||!ch.b||ch.b<2||filteredHidden.has(n.id)) continue;
+      if(!inView(n.bx,n.by))continue;
       const col = ch.b>=3 ? 'rgba(242,104,63,' : 'rgba(232,178,74,';
       ctx.fillStyle=col+'0.20)'; diamondPath(n.bx,n.by,TW*0.62,TH*0.62); ctx.fill();
       ctx.fillStyle=col+'0.32)'; diamondPath(n.bx,n.by,TW*0.40,TH*0.40); ctx.fill();
@@ -591,24 +638,67 @@
     if(flip){ctx.save();ctx.translate(x*2,0);ctx.scale(-1,1);ctx.drawImage(VEH,sx,sy,vCW,vCH,dx,dy,dW,dH);ctx.restore();}
     else ctx.drawImage(VEH,sx,sy,vCW,vCH,dx,dy,dW,dH);}
 
+  // ---------- cluster badges (LOD_CLUSTER tier — entire districts collapsed to one badge) ----------
+  function drawClusterBadge(cl){
+    const x=cl.wx,y=cl.wy;
+    if(!inView(x,y))return;
+    if(focusK&&cl.d!==focusK)return;
+    const R=28,FONT_C="'Plus Jakarta Sans',system-ui,sans-serif";
+    // outer glow
+    ctx.save();
+    ctx.globalAlpha=0.22;
+    ctx.beginPath();ctx.arc(x,y,R*1.6,0,7);ctx.fillStyle=cl.color;ctx.fill();
+    ctx.globalAlpha=1;
+    // filled circle
+    ctx.beginPath();ctx.arc(x,y,R,0,7);ctx.fillStyle=cl.color;ctx.fill();
+    // border ring
+    ctx.lineWidth=2;ctx.strokeStyle="rgba(255,255,255,.45)";ctx.stroke();
+    // count label
+    const label=cl.count>=1000?(Math.round(cl.count/100)/10)+'k':String(cl.count);
+    ctx.fillStyle="#0a0a12";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="700 13px "+FONT_C;
+    ctx.fillText(label,x,y);
+    // district name beneath
+    ctx.globalAlpha=0.75;ctx.fillStyle=cl.color;ctx.font="600 10px "+FONT_C;
+    ctx.fillText(cl.label,x,y+R+12);
+    ctx.restore();}
+
   // ---------- render ----------
   let focusK=null,filteredHidden=new Set(),selectedId=null,connSet=new Set();
-  function render(){NOW=performance.now()-T0;moveSky();ctx.setTransform(DPR,0,0,DPR,0,0);drawBackdrop();
+  function render(){NOW=performance.now()-T0;updateLodAndClip();moveSky();ctx.setTransform(DPR,0,0,DPR,0,0);drawBackdrop();
     ctx.save();ctx.translate(cam.x,cam.y);ctx.scale(cam.zoom,cam.zoom);
     ctx.globalAlpha=Math.min(1,NOW/450);
+
+    // LOD_CLUSTER: render one badge per district, skip all expensive geometry
+    if(_lod===LOD_CLUSTER){
+      drawIslandShadow();drawSlab();
+      CLUSTERS.forEach(drawClusterBadge);
+      ctx.globalAlpha=1;ctx.restore();return;}
+
     drawIslandShadow();drawSlab();drawGround();drawCloudShadows();drawShadows();drawChurn();
-    const list=OBJ.slice();drawCars(list);
+
+    // At LOD_SIMPLE / LOD_DOT we skip cars, trees, props to keep frame-time low
+    const showFull=(_lod===LOD_FULL);
+    const list=OBJ.slice();
+    if(showFull)drawCars(list);
     list.sort((a,b)=>(a.gx+a.gy)-(b.gx+b.gy)||a.gx-b.gx);
     for(const o of list){
-      if(o.k==='t'){drawTree(o.gx,o.gy,o.seed);continue;}
-      if(o.k==='p'){drawProp(o.type,o.gx,o.gy);continue;}
-      if(o.k==='c'){if(window.__KC_KENNEY__&&KEN.ok)drawKenCar(o.wx.x,o.wx.y,o.car);else if(VEH_OK)drawCarSprite(o.wx.x,o.wx.y,o.car.m,o.car.dir);else drawCar(o.wx.x,o.wx.y,o.car.col,o.car.dir);continue;}
+      // Viewport cull: skip objects outside the clip rect
+      const {gx,gy}=o;const wc=isoToWorld(gx,gy);if(!inView(wc.x,wc.y))continue;
+      if(o.k==='t'){if(showFull)drawTree(gx,gy,o.seed);continue;}
+      if(o.k==='p'){if(showFull)drawProp(o.type,gx,gy);continue;}
+      if(o.k==='c'){if(showFull){if(window.__KC_KENNEY__&&KEN.ok)drawKenCar(o.wx.x,o.wx.y,o.car);else if(VEH_OK)drawCarSprite(o.wx.x,o.wx.y,o.car.m,o.car.dir);else drawCar(o.wx.x,o.wx.y,o.car.col,o.car.dir);}continue;}
       const n=o.n;const hidden=filteredHidden.has(n.id);
       if(n.id===selectedId)continue;
       const dim=hidden||(selectedId&&!connSet.has(n.id))||(focusK&&n.d!==focusK);
+      // LOD_DOT: render buildings as coloured dots instead of full models
+      if(_lod===LOD_DOT){
+        if(dim)continue;
+        ctx.fillStyle=DCFG[n.d]?DCFG[n.d].color:'#7c83a3';
+        ctx.beginPath();ctx.arc(wc.x,wc.y,4,0,7);ctx.fill();
+        continue;}
       drawBuilding(n,false,dim);}
     if(selectedId){drawConnections(selectedId);const sn=byId[selectedId];if(sn&&!filteredHidden.has(sn.id))drawBuilding(sn,true,false);}
-    drawClouds();drawSkyLife();
+    if(showFull){drawClouds();drawSkyLife();}
     ctx.globalAlpha=1;ctx.restore();}
   function loop(){requestAnimationFrame(loop);cam.x+=(cam.tx-cam.x)*0.12;cam.y+=(cam.ty-cam.y)*0.12;cam.zoom+=(cam.tz-cam.zoom)*0.12;render();}
 

@@ -143,3 +143,83 @@ export const HEADLINE_CLAIM =
  * @type {string}
  */
 export const BENCHMARK_RESULTS_VERSION = '1.0';
+
+// ---------------------------------------------------------------------------
+// formatBenchmarkReport (SAT-460)
+// ---------------------------------------------------------------------------
+
+/**
+ * Produce a human-readable Markdown benchmark report from the comparison runs
+ * stored in this module.  The report is deterministic — same input → same
+ * output — and safe to embed in wikis, PR comments, or printed to stdout.
+ *
+ * Layout:
+ *   1. Headline summary block (the three key numbers)
+ *   2. Per-run table (task id, tokens naive/guided, tool calls, TTRF, correct)
+ *   3. Footer with provenance note
+ *
+ * @param {object}   [opts]
+ * @param {object[]} [opts.runs=COMPARISON_RUNS]   — override for testing.
+ * @returns {string}  Markdown string, no trailing newline.
+ */
+export function formatBenchmarkReport({ runs = COMPARISON_RUNS } = {}) {
+  // --- summary numbers (re-derived from the provided runs so the function is
+  //     self-contained and testable with custom run sets) -------------------
+  const totalNaiveTok   = runs.reduce((s, r) => s + r.naive.tokens_in  + r.naive.tokens_out,  0);
+  const totalGuidedTok  = runs.reduce((s, r) => s + r.guided.tokens_in + r.guided.tokens_out, 0);
+  const totalNaiveCalls = runs.reduce((s, r) => s + r.naive.tool_calls,  0);
+  const totalGuidedCalls = runs.reduce((s, r) => s + r.guided.tool_calls, 0);
+
+  const tokenPct = totalNaiveTok > 0
+    ? Math.round(100 * (totalNaiveTok - totalGuidedTok) / totalNaiveTok)
+    : 0;
+  const callPct = totalNaiveCalls > 0
+    ? Math.round(100 * (totalNaiveCalls - totalGuidedCalls) / totalNaiveCalls)
+    : 0;
+
+  const both = runs.filter(
+    r => r.naive.time_to_relevant_file_ms !== null &&
+         r.guided.time_to_relevant_file_ms !== null,
+  );
+  const speedup = both.length > 0
+    ? Math.round(
+        10 * (both.reduce((s, r) => s + r.naive.time_to_relevant_file_ms,  0) / both.length) /
+             (both.reduce((s, r) => s + r.guided.time_to_relevant_file_ms, 0) / both.length),
+      ) / 10
+    : 0;
+  const speedupStr = Number.isInteger(speedup) ? String(speedup) : speedup.toFixed(1);
+
+  const guidedCorrect = runs.filter(r => r.guided.correct).length;
+  const naiveCorrect  = runs.filter(r => r.naive.correct).length;
+
+  // --- headline block -------------------------------------------------------
+  const lines = [
+    '## KnoSky token-efficiency benchmark (SAT-439)',
+    '',
+    `**${tokenPct}% fewer tokens · ${callPct}% fewer tool calls · ${speedupStr}× faster to the right file**`,
+    '',
+    `_${runs.length} tasks, naive agent vs. KnoSky-guided agent._`,
+    `_Guided: ${guidedCorrect}/${runs.length} correct. Naive: ${naiveCorrect}/${runs.length} correct._`,
+    '',
+    '### Per-task results',
+    '',
+    '| Task | Tokens (naive) | Tokens (guided) | Tool calls (naive) | Tool calls (guided) | TTRF naive (ms) | TTRF guided (ms) | Guided correct |',
+    '|------|---------------:|----------------:|-------------------:|--------------------:|----------------:|-----------------:|:--------------:|',
+  ];
+
+  for (const run of runs) {
+    const tnaive  = run.naive.tokens_in  + run.naive.tokens_out;
+    const tguided = run.guided.tokens_in + run.guided.tokens_out;
+    const ttrfN = run.naive.time_to_relevant_file_ms  === null ? '—' : String(run.naive.time_to_relevant_file_ms);
+    const ttrfG = run.guided.time_to_relevant_file_ms === null ? '—' : String(run.guided.time_to_relevant_file_ms);
+    const correct = run.guided.correct ? '✓' : '✗';
+    lines.push(
+      `| ${run.task_id} | ${tnaive} | ${tguided} | ${run.naive.tool_calls} | ${run.guided.tool_calls} | ${ttrfN} | ${ttrfG} | ${correct} |`,
+    );
+  }
+
+  lines.push('');
+  lines.push(`_Data source: \`core/benchmark-results.mjs\` (BENCHMARK_RESULTS_VERSION ${BENCHMARK_RESULTS_VERSION})._`);
+
+  return lines.join('\n');
+}

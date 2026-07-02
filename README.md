@@ -71,6 +71,25 @@ Then ask: *"search KnoSky for what we decided about authentication."* Read-only 
 
 **See how your code connects.** Select a file in the city to see its **connections** (roads to the files it imports / that import it) and **churn** (recently-changed files glow). Or ask your assistant *"what connects to src/auth.js?"* — file-level structure only, not code analysis.
 
+**3. Get PR navigation comments automatically (GitHub Action — PR-GPS)**
+
+Add this to any workflow that runs on pull requests:
+
+```yaml
+- name: Check out the repo (full history so the diff works)
+  uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+
+- name: KnoSky PR-GPS
+  uses: SathiaAI/knosky@v0.5.0
+  with:
+    base: ${{ github.event.pull_request.base.sha }}
+    head: ${{ github.event.pull_request.head.sha }}
+```
+
+The action posts (and updates) a single advisory comment on the PR listing which files changed, suggested review starting points, and related tests/docs. It reads file/folder/import structure only — never uploads code bodies — and **never blocks or gates the build**. The `github-token` input defaults to the workflow token; a `fail-on-secret` guard is available for stricter CI setups (see [`action.yml`](./action.yml) for all inputs).
+
 ---
 
 ## What it is **not** (on purpose)

@@ -521,6 +521,10 @@ const baseManifest = makeIntentManifest({
 // the point: it forces the decision to be conscious, not accidental.
 // ---------------------------------------------------------------------------
 {
+  // Full JS/TS family, not just .mjs/.js -- none of these exist in the repo
+  // today, but the scan shouldn't silently miss one if that changes
+  // (Architect review, PR #42 round 3).
+  const SCAN_EXTENSIONS = ['.mjs', '.cjs', '.js', '.mts', '.cts', '.ts'];
   const SKIP_DIRS = new Set(['test', 'node_modules', '.git']);
   const scanRepoForRevokeKey = (dirPath) => {
     if (!fs.existsSync(dirPath)) return [];
@@ -529,7 +533,7 @@ const baseManifest = makeIntentManifest({
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name)) continue;
         hits.push(...scanRepoForRevokeKey(path.join(dirPath, entry.name)));
-      } else if (entry.isFile() && (entry.name.endsWith('.mjs') || entry.name.endsWith('.js'))) {
+      } else if (entry.isFile() && SCAN_EXTENSIONS.some(ext => entry.name.endsWith(ext))) {
         const full = path.join(dirPath, entry.name);
         if (full === path.join(ROOT, 'core', 'key-store.mjs')) continue; // definition itself
         const content = fs.readFileSync(full, 'utf8');

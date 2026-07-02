@@ -12,7 +12,7 @@
 //
 // Pure Node stdlib, ESM — no third-party dependencies.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -62,9 +62,15 @@ export function writeHwm(hwmPath, seq) {
       `ledger_hwm must be a non-negative integer, got: ${JSON.stringify(seq)}`,
     );
   }
-  mkdirSync(dirname(hwmPath), { recursive: true });
-  // Minimal document: only ledger_hwm — no ledger content here.
-  writeFileSync(hwmPath, JSON.stringify({ ledger_hwm: seq }) + '\n', 'utf8');
+  const dir = dirname(hwmPath);
+  mkdirSync(dir, { recursive: true });
+  // Atomic write: write to a sibling temp file, then rename into place.
+  // This prevents a partial/corrupt HWM file on crash or power loss —
+  // critical because a corrupt HWM would either silently reset the guard
+  // (ENOENT path) or throw (parse error), both of which weaken security.
+  const tmp = hwmPath + '.tmp';
+  writeFileSync(tmp, JSON.stringify({ ledger_hwm: seq }) + '\n', 'utf8');
+  renameSync(tmp, hwmPath);
 }
 
 // ---------------------------------------------------------------------------

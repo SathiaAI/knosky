@@ -12,7 +12,9 @@ import {
   computeLedgerSeq,
   checkHighWaterMark,
   validateFreshness,
+  validateFreshnessWithHwm,
 } from '../core/freshness.mjs';
+import { readHwm } from '../core/ledger.mjs';
 import { makeRouteDoc, validateRouteDoc, makeIntentManifest, validateIntentManifest } from '../core/schema.mjs';
 import { kcRoute } from '../core/route.mjs';
 import { kcBundle } from '../core/bundle.mjs';
@@ -301,6 +303,56 @@ const ok = (name, cond, extra = '') => {
   const city_v4_noSeq = {};
   const r4 = validateFreshness(city_v4_noSeq, r1.ledger_seq);
   ok('v13 e2e: no-seq city after anchored acceptance is rejected', r4.ok === false);
+}
+
+// ---------------------------------------------------------------------------
+// validateFreshnessWithHwm — persisted high-water-mark guard (SAT-474)
+// Proves that a ledger-truncation/rollback attempt is caught end-to-end via
+// the freshness-attestation entry point using the persisted HWM (not just via
+// core/ledger.mjs in isolation).
+// ---------------------------------------------------------------------------
+{
+  const d = mkdtempSync(join(tmpdir(), 'klfresh-hwm-'));
+  const hwmPath = join(d, 'ledger.hwm.json');
+
+  // (1) First load: no HWM file yet — any seq is accepted.
+  const r1 = validateFreshnessWithHwm({ ledger_seq: 10 }, hwmPath);
+  ok('persisted-hwm e2e: first load (seq=10) accepted', r1.ok === true, JSON.stringify(r1.errors));
+  ok('persisted-hwm e2e: returns ledger_seq=10', r1.ledger_seq === 10);
+  ok('persisted-hwm e2e: HWM file written at 10', readHwm(hwmPath) === 10);
+
+  // (2) Advancing ledger is accepted and HWM advances.
+  const r2 = validateFreshnessWithHwm({ ledger_seq: 20 }, hwmPath);
+  ok('persisted-hwm e2e: advancing seq (10→20) accepted', r2.ok === true, JSON.stringify(r2.errors));
+  ok('persisted-hwm e2e: HWM advanced to 20', readHwm(hwmPath) === 20);
+
+  // (3) Rollback attempt: seq=15 < HWM=20 — must be refused.
+  const r3 = validateFreshnessWithHwm({ ledger_seq: 15 }, hwmPath);
+  ok('persisted-hwm e2e: rollback (seq=15 < hwm=20) rejected', r3.ok === false);
+  ok('persisted-hwm e2e: rollback error present', r3.errors.length > 0, JSON.stringify(r3.errors));
+  ok('persisted-hwm e2e: rollback error mentions anti-truncation',
+     r3.errors.some(e => e.includes('anti-truncation')));
+  // HWM must NOT have been lowered by the refused state.
+  ok('persisted-hwm e2e: HWM unchanged after rollback attempt', readHwm(hwmPath) === 20);
+
+  // (4) After restart simulation: re-read the HWM from disk and verify defence
+  //     is still enforced (this is the key distinction from the in-memory guard).
+  //     Attempt another rollback — seq=5, which is well below the persisted HWM=20.
+  const r4 = validateFreshnessWithHwm({ ledger_seq: 5 }, hwmPath);
+  ok('persisted-hwm e2e: post-restart rollback (seq=5) still rejected', r4.ok === false);
+  ok('persisted-hwm e2e: HWM still 20 after second rollback attempt', readHwm(hwmPath) === 20);
+
+  // (5) Idempotent replay at HWM=20 is accepted (checkAndAdvance contract).
+  const r5 = validateFreshnessWithHwm({ ledger_seq: 20 }, hwmPath);
+  ok('persisted-hwm e2e: replay seq=20 accepted (idempotent)', r5.ok === true, JSON.stringify(r5.errors));
+
+  // (6) Missing ledger_seq fails without touching the HWM file.
+  const r6 = validateFreshnessWithHwm({}, hwmPath);
+  ok('persisted-hwm e2e: missing ledger_seq fails', r6.ok === false);
+  ok('persisted-hwm e2e: missing-seq error present', r6.errors.some(e => e.includes('ledger_seq')));
+  ok('persisted-hwm e2e: HWM unchanged after missing-seq attempt', readHwm(hwmPath) === 20);
+
+  rmSync(d, { recursive: true, force: true });
 }
 
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));

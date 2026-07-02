@@ -137,5 +137,23 @@ const ok = (name, cond, extra = '') => {
 }
 
 // ---------------------------------------------------------------------------
+// (k) D-173 regression guard: the GENERAL PR review gate (tools/ai-review.mjs)
+//     must never itself post a GitHub "APPROVE" review. canAutoPublish is data
+//     for a separate, narrowly-scoped release workflow to consume -- it must
+//     never be wired to an autonomous approval here. See Decisions_Log.md D-173.
+// ---------------------------------------------------------------------------
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const src = fs.readFileSync(path.join(ROOT, 'tools', 'ai-review.mjs'), 'utf8');
+  // Check for the quoted string literal (a real code value), not the bare word --
+  // the file legitimately discusses "APPROVE" in explanatory comments.
+  const hasApproveLiteral = /['"]APPROVE['"]/.test(src);
+  ok("(k) D-173: tools/ai-review.mjs never uses 'APPROVE' as a literal event value", !hasApproveLiteral);
+}
+
+// ---------------------------------------------------------------------------
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));
 process.exit(failures ? 1 : 0);

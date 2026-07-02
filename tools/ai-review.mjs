@@ -132,11 +132,20 @@ if (process.env.REVIEW_LOCAL) {
   log(`LOCAL gate: criticals=${criticals.length} warnings=${warnings.length} failed=${failed.length} escalate=${escalate} canAutoPublish=${canAutoPublish} reasons=${JSON.stringify(reasons)}`);
   process.exit(escalate ? 1 : 0);
 }
-// D-166 (SAT-466): zero-P0/critical + all reviewers succeeded → APPROVE (auto-proceed-to-publish).
-// escalate → REQUEST_CHANGES; canAutoPublish → APPROVE; otherwise → COMMENT (informational only).
-const event = escalate ? 'REQUEST_CHANGES' : canAutoPublish ? 'APPROVE' : 'COMMENT';
+// SCOPE FIX (D-173, post-PR#47 review, Paul-directed 2026-07-02): this file is the GENERAL
+// PR review gate -- security-review.yml triggers it on every PR to main, not just release
+// PRs. D-166 only pre-authorized ONE narrow thing: the red-team suite (SAT-437) gating the
+// npm PUBLISH step with zero human sign-off on a clean pass. It did NOT authorize this
+// general gate to unilaterally submit GitHub PR approvals. This file must NEVER post an
+// APPROVE review: doing so would let the AI reviewers' own self-assessment single-handedly
+// satisfy a review-approval gate, with no independent human or out-of-band check, on every
+// PR forever -- including future trust-root/security PRs this gate was never meant to
+// auto-clear. canAutoPublish is still computed below (and shown in the review body) purely
+// as DATA -- a separate, narrowly-scoped release workflow may consume it later for the actual
+// SAT-437/D-166 publish decision, but that consumption never happens here.
+const event = escalate ? 'REQUEST_CHANGES' : 'COMMENT';
 try { await gh('POST', `/repos/${REPO}/pulls/${PR_NUMBER}/reviews`, { body: md, event }); }
 catch (e) { log('post review failed: ' + (e && e.message ? e.message : String(e))); }
 if (escalate) { log(`blocking: reasons=${JSON.stringify(reasons)}`); process.exit(1); }
-if (canAutoPublish) log(`auto-approved (zero P0/critical, all reviewers succeeded): warnings=${warnings.length}`);
+if (canAutoPublish) log(`eligible for D-166 auto-publish per canAutoPublish (zero P0/critical, all reviewers succeeded) -- NOT auto-approved here (D-173); a dedicated release workflow must independently consume this signal.`);
 else log(`pass (comment only): warnings=${warnings.length}`);

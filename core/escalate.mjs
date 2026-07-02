@@ -23,8 +23,14 @@
  *                    (empty array when escalate === false).
  *   paulMessage    — the block line to embed in the PR review body;
  *                    non-empty iff escalate === true.
- *   canAutoPublish — true iff the review may auto-approve the PR (D-166 pre-authorized):
- *                    zero criticals, zero reviewer failures, and ≥1 reviewer ran.
+ *   canAutoPublish — DATA ONLY, not an authorization by itself (D-173): true iff a clean
+ *                    review (zero criticals, zero reviewer failures, ≥1 reviewer ran)
+ *                    would satisfy D-166's pre-authorized-publish condition. Callers must
+ *                    NOT treat this as license to take an autonomous action (e.g. approving
+ *                    a PR, publishing a release) on its own -- it exists so a separately
+ *                    gated, narrowly-scoped release workflow can consume it for the actual
+ *                    SAT-437/D-166 publish decision. The general per-PR review script
+ *                    deliberately does NOT act on it -- see that script's own comments.
  */
 export function shouldEscalateToPaul({ criticals = [], failed = [], total = 0 } = {}) {
   const reasons = [];

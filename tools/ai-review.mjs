@@ -111,7 +111,8 @@ const criticals = findings.filter(f => f.sev === 'CRITICAL');
 const warnings = findings.filter(f => f.sev === 'WARNING');
 
 // D-166 (SAT-467): any P0/critical or ambiguous result must surface to Paul, never proceed silently.
-const { escalate, reasons, paulMessage } = shouldEscalateToPaul({ criticals, failed, total: ROLES.length });
+// D-166 (SAT-466): zero-P0/critical + all reviewers succeeded → auto-approve (canAutoPublish).
+const { escalate, reasons, paulMessage, canAutoPublish } = shouldEscalateToPaul({ criticals, failed, total: ROLES.length });
 
 let md = `## 🤖 KnoSky AI Review\n\n`;
 md += ROLES.length === 3 ? `Reviewers: QA · Adversarial (DeepSeek) · **Architect (Opus)** — sensitive/large diff.\n\n` : `Reviewers: QA · Adversarial (DeepSeek).\n\n`;
@@ -128,11 +129,14 @@ if (paulMessage) md += `\n**${paulMessage}**`;
 
 if (process.env.REVIEW_LOCAL) {
   process.stdout.write('\n' + md + '\n');
-  log(`LOCAL gate: criticals=${criticals.length} warnings=${warnings.length} failed=${failed.length} escalate=${escalate} reasons=${JSON.stringify(reasons)}`);
+  log(`LOCAL gate: criticals=${criticals.length} warnings=${warnings.length} failed=${failed.length} escalate=${escalate} canAutoPublish=${canAutoPublish} reasons=${JSON.stringify(reasons)}`);
   process.exit(escalate ? 1 : 0);
 }
-const event = escalate ? 'REQUEST_CHANGES' : 'COMMENT';
+// D-166 (SAT-466): zero-P0/critical + all reviewers succeeded → APPROVE (auto-proceed-to-publish).
+// escalate → REQUEST_CHANGES; canAutoPublish → APPROVE; otherwise → COMMENT (informational only).
+const event = escalate ? 'REQUEST_CHANGES' : canAutoPublish ? 'APPROVE' : 'COMMENT';
 try { await gh('POST', `/repos/${REPO}/pulls/${PR_NUMBER}/reviews`, { body: md, event }); }
 catch (e) { log('post review failed: ' + (e && e.message ? e.message : String(e))); }
 if (escalate) { log(`blocking: reasons=${JSON.stringify(reasons)}`); process.exit(1); }
-log(`pass: warnings=${warnings.length}`);
+if (canAutoPublish) log(`auto-approved (zero P0/critical, all reviewers succeeded): warnings=${warnings.length}`);
+else log(`pass (comment only): warnings=${warnings.length}`);

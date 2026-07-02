@@ -21,6 +21,10 @@
 // Feeds:   SAT-437 (red-team suite), SAT-438 (synthetic data / simulation)
 // Exports: make1KeyFixture, make2KeyFixture, make3KeyFixture
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
   createKeyStore,
   rotateKey,
@@ -30,6 +34,8 @@ import {
   verifyManifest,
 } from '../core/key-store.mjs';
 import { makeIntentManifest } from '../core/schema.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // ---------------------------------------------------------------------------
 // Module-level minimal manifest (used by make1KeyFixture; kept here so the
@@ -486,6 +492,49 @@ const baseManifest = makeIntentManifest({
     ok(`RT-KS-001-J quorum math: M=${M} peers → required=${computed} (expected ${expected})`,
       computed === expected);
   }
+}
+
+// ---------------------------------------------------------------------------
+// SAT-478 gate  revokeKey must remain unreachable from bin/ and mcp/
+//
+// SAT-478 (SECURITY.md, D-167): revokeKey() at M=0 authorizes by state, not
+// caller identity -- any caller can wipe the sole remaining key with zero
+// approvals and zero proof of key possession. The ONLY current mitigation is
+// that revokeKey has no reachable call site from the CLI or MCP server. This
+// check enforces that in code, not just in a Linear ticket: if a future PR
+// wires revokeKey into either surface without first resolving SAT-478
+// (caller-authentication), this test fails loudly instead of silently
+// shipping an exploitable path.
+//
+// A future PR that legitimately resolves SAT-478 and wires revokeKey in must
+// update or remove this check as a deliberate, visible part of that change --
+// that's the point: it forces the decision to be conscious, not accidental.
+// ---------------------------------------------------------------------------
+{
+  const scanDirForRevokeKey = (dirPath) => {
+    if (!fs.existsSync(dirPath)) return [];
+    const hits = [];
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+      const full = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        hits.push(...scanDirForRevokeKey(full));
+      } else if (entry.isFile() && (entry.name.endsWith('.mjs') || entry.name.endsWith('.js'))) {
+        const content = fs.readFileSync(full, 'utf8');
+        if (content.includes('revokeKey')) hits.push(full);
+      }
+    }
+    return hits;
+  };
+
+  const binHits = scanDirForRevokeKey(path.join(ROOT, 'bin'));
+  const mcpHits = scanDirForRevokeKey(path.join(ROOT, 'mcp'));
+
+  ok('SAT-478 gate: revokeKey is not referenced anywhere under bin/',
+    binHits.length === 0,
+    binHits.length ? binHits.join(', ') : '');
+  ok('SAT-478 gate: revokeKey is not referenced anywhere under mcp/',
+    mcpHits.length === 0,
+    mcpHits.length ? mcpHits.join(', ') : '');
 }
 
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));

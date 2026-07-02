@@ -43,6 +43,16 @@ jobs:
         run: |
           set -e
           for f in test/*.mjs; do
+            case "$f" in
+              # SAT-465-SKIP-LIST-START (auto-checked by test/adversarial-suite.test.mjs)
+              # Already run, named + audited, by the SAT-465 adversarial-suite gate below
+              # (test/adversarial-suite.test.mjs, itself picked up by this same glob) --
+              # running them again here would execute each one twice per job for zero
+              # added coverage. Keep this list in exact sync with that file's SUITE array.
+              test/security-fixtures.mjs|test/redteam-fixtures.mjs|test/key-store-quorum-redteam.mjs|test/trust-root-adversarial.test.mjs|test/rendering-adversarial.test.mjs|test/policy-fuzzer.mjs|test/auth-oracle-fuzz.test.mjs|test/regulated-sim-fixtures.mjs)
+              # SAT-465-SKIP-LIST-END
+                continue ;;
+            esac
             echo "== $f =="
             node "$f"
           done

@@ -78,5 +78,47 @@ for (const rel of SUITE) {
     !!src && src.indexOf('for f in test/*.mjs') < src.indexOf('npm publish'));
 }
 
+// ---------------------------------------------------------------------------
+// (d) Double-execution guard (SAT-465 fix): ci.yml and release.yml must each
+// skip these exact 8 files in their own `test/*.mjs` glob — this gate already
+// runs them as subprocesses in (b), so the glob running them too would execute
+// each one twice per CI job for no added coverage. Extracts the skip-list from
+// each workflow's SAT-465-SKIP-LIST markers and asserts it is EXACTLY the SUITE
+// set (order-independent) — catches drift in either direction: a file added to
+// SUITE but not skipped (silently double-run again) or skipped but removed from
+// SUITE (silently never run at all).
+// ---------------------------------------------------------------------------
+for (const wf of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+  const wfPath = path.join(ROOT, wf);
+  const src = (() => {
+    try { return fs.readFileSync(wfPath, 'utf8'); } catch { return null; }
+  })();
+  ok(`(d) ${wf} exists`, src !== null);
+  if (!src) continue;
+
+  const block = src.match(/SAT-465-SKIP-LIST-START([\s\S]*?)SAT-465-SKIP-LIST-END/);
+  ok(`(d) ${wf} has a SAT-465-SKIP-LIST block`, !!block);
+  if (!block) continue;
+
+  // Only the actual case-pattern line: a standalone pipe-separated list of
+  // test/*.mjs paths ending in a bare ')'. This deliberately does NOT match
+  // the explanatory prose in the same block (e.g. "(test/adversarial-suite.
+  // test.mjs, itself picked up...)"), which mentions a path but isn't the
+  // pattern line itself.
+  const patternLine = block[1].match(/^\s*(test\/[\w.-]+\.mjs(?:\|test\/[\w.-]+\.mjs)+)\)\s*$/m);
+  ok(`(d) ${wf} skip-list has a parseable case-pattern line`, !!patternLine);
+  if (!patternLine) continue;
+
+  const skipped = patternLine[1].split('|');
+  const skippedSet = new Set(skipped);
+  const suiteSet = new Set(SUITE);
+  const missingFromSkip = SUITE.filter(s => !skippedSet.has(s));
+  const extraInSkip = skipped.filter(s => !suiteSet.has(s));
+  ok(`(d) ${wf} skip-list exactly matches SUITE (no missing entries)`,
+    missingFromSkip.length === 0, missingFromSkip.join(', '));
+  ok(`(d) ${wf} skip-list exactly matches SUITE (no stale/extra entries)`,
+    extraInSkip.length === 0, extraInSkip.join(', '));
+}
+
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));
 process.exit(failures ? 1 : 0);

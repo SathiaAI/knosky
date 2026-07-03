@@ -5,11 +5,12 @@
 // executed simultaneously across all supported model families in parallel — not
 // sequentially — and collected into a single artifact for analysis.
 //
-// Paul's explicit instruction: "run simultaneous tests" — every model family
+// Paul's explicit instruction: "run simultaneous tests" -- every model family
 // (Claude, GPT, Gemini, DeepSeek, Grok) receives the same tasks at the same
-// time via Promise.all.  This module owns the protocol shape; the actual
-// dispatch (HTTP + Promise.all) lives in tools/ (see tools/ai-review.mjs for
-// the established pattern).
+// time via Promise.all. This module owns the protocol shape only; it makes no
+// network calls itself. A separate, not-yet-built tools/-layer helper (following
+// the CI-only HTTP-dispatch pattern already used elsewhere in this repo's build
+// tooling) is expected to supply the real dispatchFn at call time -- see D-176.
 //
 // Pure Node stdlib, ESM — no new deps.
 

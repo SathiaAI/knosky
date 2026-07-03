@@ -2,6 +2,27 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [0.6.0] - 2026-07-02 -- Trust-root hardening, rendering at scale, adversarial red-team suite
+
+### Added
+- **Rendering engine at scale:** level-of-detail rendering, clustering, virtualization, and streaming for large single-repo graphs; a cross-repo graph concept and rendering for multi-repo sets.
+- **Adversarial red-team suite:** a full pass across four categories -- indexer/artifact safety, local trust root, rendering engine, protocol/schema -- now wired into CI as a required check on every PR, and into the release workflow as a hard gate before any `npm publish`. Findings, fixes, and accepted limitations are published in [RED-TEAM.md](RED-TEAM.md).
+- **Conditional publish gate:** the release workflow now runs the complete test suite (including the full red-team suite) before publishing; any failure blocks the release rather than proceeding silently.
+- **Real-world validation:** indexing and rendering validated at scale against a large real monorepo and a real 4-repo linked set with genuine cross-repo dependencies, plus an adversarial case with deliberately stale/conflicting policy data.
+- **Measurement infrastructure (advisory, offline, no telemetry):** a naive-vs-KnoSky-guided agent comparison protocol, and a harness to run the same benchmark simultaneously across multiple model families for independent comparison.
+- **Protocol Adoption Kit:** a start-here doc, a machine-readable protocol spec with schemas, a model-agnostic onboarding contract, and GitHub Action packaging reusing the PR-GPS pattern.
+- Comparison page and additional launch documentation under `wiki/`.
+
+### Security
+- **Trust-root hardening (Hardening Addendum 2):** full key rotation/revocation lifecycle. Two quorum-math edge cases are identified, fixed where fixable, and explicitly documented rather than hidden: the N=2 degenerate case (mathematically unavoidable at N=2 -- maintain N>=3 for real threshold protection) and the M=0 sole-remaining-key self-revocation case (an intentional design choice -- see SECURITY.md). The ledger high-water-mark guard is now correctly consumed by the freshness-attestation check it was built to protect.
+- **CI hardening:** a new AI-assisted security review runs on every pull request alongside the existing gitleaks secret scan.
+
+### Changed
+- Public wording on the local trust model's TUF-evolution is now locked to the reviewed sentence across docs/README/site copy.
+
+### Notes
+- Everything above remains **local-first, no telemetry, no hosted backend** -- nothing in this release changes that.
+
 ## [0.5.0] - 2026-07-01 -- Route engine + PR-GPS (Protocol v1)
 
 ### Added

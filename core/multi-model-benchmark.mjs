@@ -14,7 +14,10 @@
 // Pure Node stdlib, ESM — no new deps.
 
 import { PROTOCOL_VERSION } from './schema.mjs';
-import { validateComparisonRun } from './comparison.mjs';
+// NOTE (D-176, post-PR#50 review): this file does NOT import validateComparisonRun from
+// core/comparison.mjs -- it defines and validates its own multi-model artifact shape and
+// never delegates to the single-model comparison-run validator. An earlier version had an
+// unused import of it (dead code, flagged by review); removed rather than left in.
 
 // ---------------------------------------------------------------------------
 // Artifact type constant

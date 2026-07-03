@@ -643,7 +643,7 @@
     const x=cl.wx,y=cl.wy;
     if(!inView(x,y))return;
     if(focusK&&cl.d!==focusK)return;
-    const R=28,FONT_C="'Plus Jakarta Sans',system-ui,sans-serif";
+    const R=28/cam.zoom,FONT_C="'Plus Jakarta Sans',system-ui,sans-serif";
     // outer glow
     ctx.save();
     ctx.globalAlpha=0.22;
@@ -655,10 +655,10 @@
     ctx.lineWidth=2;ctx.strokeStyle="rgba(255,255,255,.45)";ctx.stroke();
     // count label
     const label=cl.count>=1000?(Math.round(cl.count/100)/10)+'k':String(cl.count);
-    ctx.fillStyle="#0a0a12";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="700 13px "+FONT_C;
+    ctx.fillStyle="#0a0a12";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="700 "+(13/cam.zoom)+"px "+FONT_C;
     ctx.fillText(label,x,y);
     // district name beneath
-    ctx.globalAlpha=0.75;ctx.fillStyle=cl.color;ctx.font="600 10px "+FONT_C;
+    ctx.globalAlpha=0.75;ctx.fillStyle=cl.color;ctx.font="600 "+(10/cam.zoom)+"px "+FONT_C;
     ctx.fillText(cl.label,x,y+R+12);
     ctx.restore();}
 
@@ -694,7 +694,7 @@
       if(_lod===LOD_DOT){
         if(dim)continue;
         ctx.fillStyle=DCFG[n.d]?DCFG[n.d].color:'#7c83a3';
-        ctx.beginPath();ctx.arc(wc.x,wc.y,4,0,7);ctx.fill();
+        ctx.beginPath();ctx.arc(wc.x,wc.y,4/cam.zoom,0,7);ctx.fill();
         continue;}
       drawBuilding(n,false,dim);}
     if(selectedId){drawConnections(selectedId);const sn=byId[selectedId];if(sn&&!filteredHidden.has(sn.id))drawBuilding(sn,true,false);}

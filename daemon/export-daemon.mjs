@@ -308,8 +308,23 @@ export async function exportBatch(config, checkpointPath, startLine) {
 // ---------------------------------------------------------------------------
 
 async function _readJsonConfig(configPath) {
-  const { readFileSync } = await import('node:fs');
+  const { readFileSync, statSync } = await import('node:fs');
   try {
+    // PR #62 round-3 fix: the config may hold a bearer token in
+    // destination.headers -- warn (best-effort; not fatal, and Windows
+    // doesn't expose POSIX mode bits) if the file is group/other readable.
+    try {
+      const mode = statSync(configPath).mode & 0o777;
+      if (mode & 0o077) {
+        console.warn(
+          `[export-daemon] WARNING: config file ${configPath} is readable by `
+          + `group/other (mode ${mode.toString(8)}). It may contain a bearer `
+          + 'token in destination.headers -- consider `chmod 600`.'
+        );
+      }
+    } catch {
+      // statSync itself failing is handled by the outer readFileSync below.
+    }
     return JSON.parse(readFileSync(configPath, 'utf8'));
   } catch (err) {
     return null;
@@ -359,6 +374,11 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Cross-platform-safe entry-point check (PR #62 round-3 fix): the naive
+// `file://${process.argv[1]}` string compare breaks on Windows (backslash
+// paths) and paths with spaces/special characters. pathToFileURL normalizes
+// both sides the same way Node does internally.
+const { pathToFileURL } = await import('node:url');
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

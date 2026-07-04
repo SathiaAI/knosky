@@ -2,6 +2,33 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [0.6.3] - 2026-07-04 -- Zoomed-out view redesigned as a clean city silhouette
+
+### Changed
+- **Default zoomed-out view:** replaced the per-district badge overview added in 0.6.1/0.6.2 with a single flat-green city silhouette -- closer to viewing a map/globe from far out than a dashboard of counters. District and building detail now appears once you zoom in or select a district, which is also when the underlying ground/building geometry renders.
+
+### Fixed
+- **Missing island surface:** the isometric island's top face was never filled at any zoom level -- only its two side walls and an edge outline were drawn. This is also the root cause of earlier reports that the zoomed-out view showed "just an outline."
+
+### Notes
+- No change to indexing, protocol, or trust-root behavior.
+
+## [0.6.2] - 2026-07-03 -- District badges and building markers were rendering at sub-pixel size
+
+### Fixed
+- **Invisible zoomed-out markers:** district badges (added in 0.6.1) and individual building dots at the next zoom level in were both sized in world units that get scaled down by the camera's own zoom factor. At the very low zoom values those two tiers are designed for, this shrank every badge and dot to about a pixel or less -- present in the data, invisible on screen. Both were made a constant, readable size on screen regardless of zoom (superseded by the 0.6.3 redesign above for the district-badge tier).
+
+### Notes
+- No change to indexing, protocol, or trust-root behavior.
+
+## [0.6.1] - 2026-07-03 -- District overview badges were never rendering
+
+### Fixed
+- **Zoomed-out district badges:** the renderer computed a per-district "cluster badge" overview for the fully-zoomed-out view, but the function that populates it was never actually called, so zooming all the way out showed nothing but the map's outline. Badges populated correctly after this fix (superseded by the 0.6.3 redesign above).
+
+### Notes
+- No change to indexing, protocol, or trust-root behavior.
+
 ## [0.6.0] - 2026-07-02 -- Trust-root hardening, rendering at scale, adversarial red-team suite
 
 ### Added

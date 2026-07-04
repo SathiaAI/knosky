@@ -374,7 +374,7 @@ function _probeWin32() {
       ? 'Running inside a Windows AppContainer — network restrictions are in effect.'
       : 'Windows network isolation (WFP/AppContainer) requires packaging-time configuration. '
         + 'Runtime process wrapping is not available. Configure the AppContainer manifest when '
-        + 'packaging the evaluator. See knosky SECURITY.md §F0.5.',
+        + 'packaging the evaluator. See knosky LIMITATIONS.md, "Network lockdown scope (F0.5)".',
     unsupportedReason: active
       ? null
       : 'WFP/AppContainer is a packaging-time concern on Windows; no runtime wrap available.',

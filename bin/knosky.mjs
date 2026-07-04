@@ -123,8 +123,19 @@ if (flags.has('--no-serve')) {
 console.log('\nStarting the local MCP server (Ctrl+C to stop)...\n');
 // F0.5: place the evaluator-facing MCP server inside the OS-level network
 // lockdown when the platform supports it (core/net-lockdown.mjs).
-const { wrapArgsForLockdown } = await import('../core/net-lockdown.mjs');
-const _lockdownPrefix = wrapArgsForLockdown();
+// PR #60 Architect finding: this import must not be allowed to crash the CLI
+// (or worse, silently degrade) if net-lockdown.mjs is ever missing/broken --
+// explicitly caught, always warned, same fallback path as "tool not found".
+let _lockdownPrefix = [];
+try {
+  const { wrapArgsForLockdown } = await import('../core/net-lockdown.mjs');
+  _lockdownPrefix = wrapArgsForLockdown();
+} catch (err) {
+  console.error(
+    'KnoSky: could not load the network lockdown module (' + (err?.message || err) + ') '
+    + '-- MCP server will run WITHOUT the network lockdown.'
+  );
+}
 if (_lockdownPrefix.length === 0) {
   // PR #60 QA finding: don't silently run unwrapped -- tell the operator.
   console.error(

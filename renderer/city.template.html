@@ -188,9 +188,6 @@
     _clip={wx0:(0-cam.x)/cam.zoom-pad,wy0:(0-cam.y)/cam.zoom-pad,
            wx1:(innerWidth-cam.x)/cam.zoom+pad,wy1:(innerHeight-cam.y)/cam.zoom+pad};}
   function inView(wx,wy){return wx>=_clip.wx0&&wx<=_clip.wx1&&wy>=_clip.wy0&&wy<=_clip.wy1;}
-  // District cluster descriptors — one entry per district, built at ingest time
-  let CLUSTERS=[];
-  function buildClustersNow(){CLUSTERS=[];const acc={};for(const n of NODES){const k=n.d;if(!acc[k])acc[k]={sumX:0,sumY:0,count:0};acc[k].sumX+=n.bx;acc[k].sumY+=n.by;acc[k].count++;}Object.keys(acc).forEach(k=>{const a=acc[k];const cfg=DCFG[k]||{name:k,color:'#7c83a3'};CLUSTERS.push({d:k,label:cfg.name,color:cfg.color,count:a.count,wx:a.sumX/a.count,wy:a.sumY/a.count});});}
 
   const TW=64,TH=32;
   // central relative-size system (multiples of a tile) — tune here to keep everything proportional
@@ -454,6 +451,15 @@
     ctx.beginPath();ctx.moveTo(c.B[0],c.B[1]);ctx.lineTo(c.R[0],c.R[1]);ctx.lineTo(c.R[0],c.R[1]+DEPTH);ctx.lineTo(c.B[0],c.B[1]+DEPTH);ctx.closePath();
     g=ctx.createLinearGradient(0,c.R[1],0,c.B[1]+DEPTH);g.addColorStop(0,PAL.night?"#1b160f":"#3a2a19");g.addColorStop(1,PAL.night?"#0d0906":"#1c1409");ctx.fillStyle=g;ctx.fill();
     ctx.strokeStyle=PAL.night?"#1f3a1c":"#3f6a37";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(c.L[0],c.L[1]);ctx.lineTo(c.B[0],c.B[1]);ctx.lineTo(c.R[0],c.R[1]);ctx.stroke();}
+  // LOD_CLUSTER top face: a single flat green fill so the zoomed-all-the-way-out
+  // view reads as a clean city silhouette (like a map/globe from orbit) instead of
+  // an empty outline or a cluttered badge overlay. No per-tile detail at this LOD.
+  function drawIslandTop(){const c=islandCorners();
+    ctx.beginPath();ctx.moveTo(c.T[0],c.T[1]);ctx.lineTo(c.R[0],c.R[1]);ctx.lineTo(c.B[0],c.B[1]);ctx.lineTo(c.L[0],c.L[1]);ctx.closePath();
+    const g=ctx.createLinearGradient(c.T[0],c.T[1],c.B[0],c.B[1]);
+    g.addColorStop(0,PAL.night?"#233a22":"#4f8a4a");g.addColorStop(1,PAL.night?"#162415":"#375f34");
+    ctx.fillStyle=g;ctx.fill();
+    ctx.strokeStyle=PAL.night?"#2c4a2a":"#2f5a2c";ctx.lineWidth=1.5;ctx.stroke();}
 
   // ---------- ground ----------
   const GRASS="#3c6a3a";
@@ -638,40 +644,18 @@
     if(flip){ctx.save();ctx.translate(x*2,0);ctx.scale(-1,1);ctx.drawImage(VEH,sx,sy,vCW,vCH,dx,dy,dW,dH);ctx.restore();}
     else ctx.drawImage(VEH,sx,sy,vCW,vCH,dx,dy,dW,dH);}
 
-  // ---------- cluster badges (LOD_CLUSTER tier — entire districts collapsed to one badge) ----------
-  function drawClusterBadge(cl){
-    const x=cl.wx,y=cl.wy;
-    if(!inView(x,y))return;
-    if(focusK&&cl.d!==focusK)return;
-    const R=28/cam.zoom,FONT_C="'Plus Jakarta Sans',system-ui,sans-serif";
-    // outer glow
-    ctx.save();
-    ctx.globalAlpha=0.22;
-    ctx.beginPath();ctx.arc(x,y,R*1.6,0,7);ctx.fillStyle=cl.color;ctx.fill();
-    ctx.globalAlpha=1;
-    // filled circle
-    ctx.beginPath();ctx.arc(x,y,R,0,7);ctx.fillStyle=cl.color;ctx.fill();
-    // border ring
-    ctx.lineWidth=2;ctx.strokeStyle="rgba(255,255,255,.45)";ctx.stroke();
-    // count label
-    const label=cl.count>=1000?(Math.round(cl.count/100)/10)+'k':String(cl.count);
-    ctx.fillStyle="#0a0a12";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="700 "+(13/cam.zoom)+"px "+FONT_C;
-    ctx.fillText(label,x,y);
-    // district name beneath
-    ctx.globalAlpha=0.75;ctx.fillStyle=cl.color;ctx.font="600 "+(10/cam.zoom)+"px "+FONT_C;
-    ctx.fillText(cl.label,x,y+R+12);
-    ctx.restore();}
-
   // ---------- render ----------
   let focusK=null,filteredHidden=new Set(),selectedId=null,connSet=new Set();
   function render(){NOW=performance.now()-T0;updateLodAndClip();moveSky();ctx.setTransform(DPR,0,0,DPR,0,0);drawBackdrop();
     ctx.save();ctx.translate(cam.x,cam.y);ctx.scale(cam.zoom,cam.zoom);
     ctx.globalAlpha=Math.min(1,NOW/450);
 
-    // LOD_CLUSTER: render one badge per district, skip all expensive geometry
+    // LOD_CLUSTER: zoomed all the way out -- show a clean city silhouette only,
+    // no per-district badges. Districts are reachable by zooming in or clicking
+    // a district in the sidebar (toggleDistrict -> focusDistrictCam already
+    // zooms to a tier where ground + buildings render).
     if(_lod===LOD_CLUSTER){
-      drawIslandShadow();drawSlab();
-      CLUSTERS.forEach(drawClusterBadge);
+      drawIslandShadow();drawSlab();drawIslandTop();
       ctx.globalAlpha=1;ctx.restore();return;}
 
     drawIslandShadow();drawSlab();drawGround();drawCloudShadows();drawShadows();drawChurn();
@@ -774,7 +758,7 @@
   document.getElementById('q').addEventListener('input',e=>applySearch(e.target.value.trim()));
   let looping=false;
   function boot(){if(!NODES.length){document.getElementById('boot').textContent="Waiting for city data…";document.getElementById('boot').style.display='';return;}
-    document.getElementById('boot').style.display='none';buildClustersNow();buildChips();buildNav();applySearch(document.getElementById('q').value.trim());fitAll();cam.x=cam.tx;cam.y=cam.ty;cam.zoom=cam.tz;
+    document.getElementById('boot').style.display='none';buildChips();buildNav();applySearch(document.getElementById('q').value.trim());fitAll();cam.x=cam.tx;cam.y=cam.ty;cam.zoom=cam.tz;
     if(!looping){looping=true;T0=performance.now();loop();}}
 
   // ---------- data ingest: receive the authenticated payload over postMessage,

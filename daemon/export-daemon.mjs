@@ -226,7 +226,7 @@ async function postBatch(url, headers, entries) {
  * This is the primary public API for the export daemon loop:
  *
  * ```js
- * import { parseExportConfig, exportBatch } from './core/export-daemon.mjs';
+ * import { parseExportConfig, exportBatch } from './daemon/export-daemon.mjs';
  *
  * const cfg = parseExportConfig(rawConfig);
  * if (!cfg.ok) { /* not configured or disabled * / }
@@ -339,6 +339,12 @@ async function main() {
     process.exit(0);
   }
 
+  console.warn(
+    '[export-daemon] WARNING: this process makes real outbound network calls. '
+    + 'It is NOT part of KnoSky\'s no-egress core tool (it is not shipped in the '
+    + 'published npm package -- see SECURITY.md, "Opt-in org export"). Only run '
+    + 'this if your organization has deliberately configured its own destination.'
+  );
   console.log(`[export-daemon] exporting to ${config.destination.url} (poll ${pollMs}ms)`);
   let cursor = 0;
   for (;;) {

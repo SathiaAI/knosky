@@ -67,7 +67,7 @@ narrow, opt-in, structurally-separate boundary:
 - **Loud at runtime.** Starting the daemon prints an explicit warning that it
   makes real network calls and is not part of the no-egress core tool, before
   doing anything else.
-- **Purpose:** a free, always-on, tamper-resistant secondary checkpoint
+- **Purpose:** a free, always-on, append-only secondary checkpoint
   (append-only local file, `core/append-only-checkpoint.mjs`) with an
   *optional* path for an org to also mirror that checkpoint to storage it
   controls. The local file is the guarantee; the export daemon is a

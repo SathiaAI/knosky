@@ -268,11 +268,11 @@ const _MACOS_SANDBOX_PROFILE = `
 (allow signal)
 (allow sysctl*)
 (allow system*)
-(allow network*)
-(deny network-outbound
-  (not (remote ip "localhost:*"))
-  (not (remote ip "[::1]:*"))
-  (not (remote unix-socket)))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-outbound (remote ip "[::1]:*"))
+(allow network-outbound (remote unix-socket))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-inbound (local ip "[::1]:*"))
 `.trim();
 
 /**

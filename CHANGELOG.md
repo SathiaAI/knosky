@@ -2,6 +2,35 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [Unreleased] — F0.5 OS-level network lockdown for the evaluator process
+
+### Security
+- **F0.5 network lockdown (SAT-549):** the evaluator process can now be placed in an OS-level
+  network sandbox that structurally denies non-loopback network syscalls at the kernel level —
+  defense-in-depth beyond the existing static no-egress import lint (F1 Fix 7, which stays as a
+  cheap first-line check).
+  - **Linux:** unprivileged user+network namespace via `unshare --user --net`.  The kernel-level
+    routing table inside the namespace has no external routes; all TCP/UDP attempts to non-loopback
+    addresses return ENETUNREACH immediately.  Unix-domain sockets (used by F0.4/SO_PEERCRED IPC)
+    are unaffected.
+  - **macOS:** `sandbox-exec(1)` with a minimal SBPL profile that denies outbound network and
+    permits loopback and Unix sockets.  Full App Sandbox requires packaging-time entitlements;
+    `knosky doctor` reports availability.
+  - **Windows:** WFP/AppContainer is a packaging-time concern; `knosky doctor` detects whether
+    the current process is running inside an AppContainer and reports plainly if not.
+  - **F0.4-survives-sandbox conformance:** SO_PEERCRED (Unix-domain socket IPC) is verified to
+    work correctly inside the Linux net namespace — no carve-out needed, no general sandbox
+    loosening required.
+- **`knosky doctor` subcommand:** new `knosky doctor` command surfaces the F0.5 sandbox status
+  (active / available-but-not-running / unsupported-with-reason) so operators can confirm the
+  lockdown is in effect rather than silently proceeding without it.
+
+### Notes
+- `core/net-lockdown.mjs` exports `probeNetworkLockdownSupport()`, `wrapArgsForLockdown()`, and
+  `doctorLines()` — pure stdlib, no new dependencies.
+- The static no-egress import lint (F1 Fix 7) is unchanged; F0.5 is an additional OS-level layer,
+  not a replacement.
+
 ## [0.6.3] - 2026-07-04 -- Zoomed-out view redesigned as a clean city silhouette
 
 ### Changed

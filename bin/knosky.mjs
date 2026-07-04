@@ -15,13 +15,28 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter(a => a.startsWith('--')));
-const target = path.resolve(argv.find(a => !a.startsWith('--')) || '.');
 const NODE = process.execPath;
+const subcommand = argv.find(a => !a.startsWith('--'));
+
+// ---------------------------------------------------------------------------
+// doctor subcommand: surface security/sandbox status for operator review (F0.5)
+// Dispatched BEFORE `target` is resolved (PR #60 Architect finding): `target`
+// used to be computed unconditionally first, so `knosky doctor` would resolve
+// 'doctor' as a filesystem path -- harmless only because this branch exits
+// before `target` is ever read. Reordered so that stays true by construction.
+// ---------------------------------------------------------------------------
+if (subcommand === 'doctor') {
+  const { doctorLines } = await import('../core/net-lockdown.mjs');
+  console.log('\nKnoSky doctor — sandbox + security status\n');
+  for (const line of doctorLines()) console.log(line);
+  console.log('');
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------------------
 // ci subcommand: generate PR-GPS advisory artifacts (advisory, never breaks builds)
 // ---------------------------------------------------------------------------
-if (argv.find(a => !a.startsWith('--')) === 'ci') {
+if (subcommand === 'ci') {
   const { knoskyCi } = await import('../core/ci.mjs');
 
   // Resolve a named flag's value from argv. Supports --flag=value and --flag value.
@@ -56,6 +71,11 @@ if (argv.find(a => !a.startsWith('--')) === 'ci') {
   console.log(summaryMd);
   process.exit(exitCode);
 }
+
+// Main path (index -> build -> open -> serve): resolve the target folder only
+// here, after both early-exit subcommands, so a subcommand name is never
+// mistaken for a path.
+const target = path.resolve(subcommand || '.');
 
 if (!fs.existsSync(target)) { console.error('KnoSky: path not found: ' + target); process.exit(1); }
 
@@ -101,6 +121,31 @@ if (flags.has('--no-serve')) {
 }
 
 console.log('\nStarting the local MCP server (Ctrl+C to stop)...\n');
-const mcp = spawn(NODE, [mcpServer, cityJson], { stdio: 'inherit' });
+// F0.5: place the evaluator-facing MCP server inside the OS-level network
+// lockdown when the platform supports it (core/net-lockdown.mjs).
+// PR #60 Architect finding: this import must not be allowed to crash the CLI
+// (or worse, silently degrade) if net-lockdown.mjs is ever missing/broken --
+// explicitly caught, always warned, same fallback path as "tool not found".
+let _lockdownPrefix = [];
+try {
+  const { wrapArgsForLockdown } = await import('../core/net-lockdown.mjs');
+  _lockdownPrefix = wrapArgsForLockdown();
+} catch (err) {
+  console.error(
+    'KnoSky: could not load the network lockdown module (' + (err?.message || err) + ') '
+    + '-- MCP server will run WITHOUT the network lockdown.'
+  );
+}
+if (_lockdownPrefix.length === 0) {
+  // PR #60 QA finding: don't silently run unwrapped -- tell the operator.
+  console.error(
+    'KnoSky: no OS-level network sandbox available on this platform/environment '
+    + '(sandbox-exec/unshare not found) -- MCP server will run WITHOUT the network '
+    + 'lockdown. Run `knosky doctor` for details.'
+  );
+}
+const mcp = _lockdownPrefix.length
+  ? spawn(_lockdownPrefix[0], [..._lockdownPrefix.slice(1), NODE, mcpServer, cityJson], { stdio: 'inherit' })
+  : spawn(NODE, [mcpServer, cityJson], { stdio: 'inherit' });
 mcp.on('exit', c => process.exit(c || 0));
 process.on('SIGINT', () => { try { mcp.kill(); } catch (_) {} process.exit(0); });

@@ -1,4 +1,4 @@
-// KnoSky F0.2 — Tamper-evidence: append-only checkpoint (SAT-546).
+// KnoSky F0.2 — Append-only checkpoint (SAT-546).
 //
 // Writes every ledger event to a secondary JSONL checkpoint file that the
 // evaluator process can only append to — it cannot delete or overwrite earlier
@@ -19,17 +19,21 @@
 // The module NEVER attempts to *remove* the attribute — that would require
 // the same elevated rights and would defeat the purpose.
 //
-// The evaluator calls `appendCheckpointEntry(path, entry)`.  It uses
+// The evaluator is intended to call `appendCheckpointEntry(path, entry)`
+// on every ledger write (wiring is a separate, subsequent PR -- this PR
+// ships the checkpoint module itself). It uses
 // `O_WRONLY | O_APPEND | O_CREAT` (no truncation flag) so every open is an
 // append even without the OS attribute.  The OS attribute provides the
 // additional guarantee that a privileged process using O_WRONLY without
 // O_APPEND (or `unlink`) is also blocked.
 //
-// SEPARATION OF CONCERNS (ticket round-3 clarification):
+// SEPARATION OF CONCERNS (ticket round-3 clarification; PR #62 review hardened
+// this from a naming convention into a directory-level, structural boundary):
 //   - This module is the ONLY checkpoint surface the evaluator touches.
-//   - Any export to a remote destination is handled by core/export-daemon.mjs,
-//     a SEPARATE, unsandboxed, opt-in daemon.  The evaluator NEVER imports
-//     export-daemon.mjs and gains no network capability in any configuration.
+//   - Any export to a remote destination is handled by daemon/export-daemon.mjs
+//     -- a SEPARATE, unsandboxed, opt-in daemon that lives OUTSIDE core/, the
+//     evaluator-accessible directory.  The evaluator NEVER imports anything
+//     from daemon/ and gains no network capability in any configuration.
 //
 // Pure Node stdlib, ESM — no third-party dependencies.
 

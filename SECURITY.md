@@ -41,6 +41,38 @@ KnoSky's local trust model applies the core security principles of TUF — role 
 
 HWM-file integrity (the `ledger.hwm.json` high-water-mark guard introduced in SAT-443) is part of KnoSky's local trust boundary: an attacker who can delete or modify that file — or any file under KnoSky's data directory — already has local write access to the machine, which is equivalent to controlling KnoSky's own code. This is the same boundary D-164 draws for the trust root generally; no fully-local, no-egress tool can defend against an attacker with local filesystem write access without a remote or hardware anchor, which would violate KnoSky's core no-egress design principle.
 
+## Opt-in org export (SAT-546)
+
+KnoSky's core tool -- everything an `npm install knosky` / `npx knosky` user
+runs (the indexer, the local MCP server, `bin/knosky.mjs`) -- is no-egress by
+default and always. This section makes that guarantee's exact scope explicit,
+because `daemon/export-daemon.mjs` is a real, deliberate exception with a
+narrow, opt-in, structurally-separate boundary:
+
+- **Not shipped to npm.** `daemon/` is not listed in `package.json` "files".
+  An ordinary user who installs KnoSky from the npm registry does not receive
+  this file at all -- it cannot be invoked by accident. It only exists for an
+  organization that clones this source repository specifically to run its own
+  export process.
+- **Never imported by the evaluator.** `core/append-only-checkpoint.mjs`, the
+  MCP server, and every other evaluator-path module never import anything from
+  `daemon/` -- enforced both structurally (the file does not exist under
+  `core/`) and by an automated source-scan test (`test/append-only-checkpoint.test.mjs`,
+  F02-018/F02-019).
+- **Off by default, explicit config required.** The daemon does nothing
+  without a config file the org must create themselves, naming an HTTPS
+  destination **the org itself owns** -- never a Sathia/KnoSky-operated
+  endpoint. `parseExportConfig` rejects a missing, disabled, or non-HTTPS
+  config.
+- **Loud at runtime.** Starting the daemon prints an explicit warning that it
+  makes real network calls and is not part of the no-egress core tool, before
+  doing anything else.
+- **Purpose:** a free, always-on, tamper-resistant secondary checkpoint
+  (append-only local file, `core/append-only-checkpoint.mjs`) with an
+  *optional* path for an org to also mirror that checkpoint to storage it
+  controls. The local file is the guarantee; the export daemon is a
+  convenience layered on top of it, never a replacement or a dependency of it.
+
 ## Scope
 
 In scope: injection in generated artifacts, secret leakage through projections, the local MCP server, and the indexer's privacy defaults. Out of scope: issues that require an attacker to already control your machine or your repository's contents with your knowledge.

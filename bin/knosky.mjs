@@ -19,6 +19,17 @@ const target = path.resolve(argv.find(a => !a.startsWith('--')) || '.');
 const NODE = process.execPath;
 
 // ---------------------------------------------------------------------------
+// doctor subcommand: surface security/sandbox status for operator review (F0.5)
+// ---------------------------------------------------------------------------
+if (argv.find(a => !a.startsWith('--')) === 'doctor') {
+  const { doctorLines } = await import('../core/net-lockdown.mjs');
+  console.log('\nKnoSky doctor — sandbox + security status\n');
+  for (const line of doctorLines()) console.log(line);
+  console.log('');
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // ci subcommand: generate PR-GPS advisory artifacts (advisory, never breaks builds)
 // ---------------------------------------------------------------------------
 if (argv.find(a => !a.startsWith('--')) === 'ci') {

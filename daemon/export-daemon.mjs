@@ -327,6 +327,10 @@ async function _readJsonConfig(configPath) {
     }
     return JSON.parse(readFileSync(configPath, 'utf8'));
   } catch (err) {
+    // PR #62 round-4 fix: log why the config was unreadable/unparseable so
+    // operators can tell "malformed config" apart from "no config" -- both
+    // used to silently produce the same off-by-default no-op.
+    console.error(`[export-daemon] could not read/parse config ${configPath}: ${err.message}`);
     return null;
   }
 }
@@ -361,7 +365,21 @@ async function main() {
     + 'this if your organization has deliberately configured its own destination.'
   );
   console.log(`[export-daemon] exporting to ${config.destination.url} (poll ${pollMs}ms)`);
+
+  // PR #62 round-4 fix: persist the cursor next to the checkpoint file so a
+  // daemon restart resumes where it left off instead of re-exporting every
+  // record from line 0 (duplicate POSTs to the org's endpoint). Best-effort:
+  // a missing/corrupt cursor file just falls back to 0, same as before.
+  const { readFileSync: _readFileSync, writeFileSync: _writeFileSync } = await import('node:fs');
+  const cursorPath = `${checkpointPath}.cursor`;
   let cursor = 0;
+  try {
+    const saved = Number(_readFileSync(cursorPath, 'utf8').trim());
+    if (Number.isInteger(saved) && saved >= 0) cursor = saved;
+  } catch {
+    // No cursor file yet, or unreadable -- start from 0.
+  }
+
   for (;;) {
     const result = await exportBatch(config, checkpointPath, cursor);
     if (!result.ok) {
@@ -369,6 +387,11 @@ async function main() {
     } else if (result.exported > 0) {
       console.log(`[export-daemon] exported ${result.exported} record(s), cursor now ${result.nextLine}`);
       cursor = result.nextLine;
+      try {
+        _writeFileSync(cursorPath, String(cursor), 'utf8');
+      } catch (err) {
+        console.error(`[export-daemon] could not persist cursor to ${cursorPath}: ${err.message}`);
+      }
     }
     await new Promise((r) => setTimeout(r, pollMs));
   }

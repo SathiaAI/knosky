@@ -1,4 +1,4 @@
-// KnoSky F0.2 — Tamper-evidence: append-only checkpoint tests (SAT-546).
+// KnoSky F0.2 — Append-only checkpoint tests (SAT-546).
 //
 // Coverage:
 //   F02-001  appendCheckpointEntry writes a valid JSONL line.
@@ -19,12 +19,15 @@
 //   F02-015  exportBatch returns exhausted=true when checkpoint has no new lines.
 //   F02-016  exportBatch returns ok=false on filesystem error (missing file).
 //   F02-017  No-egress: append-only-checkpoint.mjs source has no network-call patterns.
-//   F02-018  No-egress: export-daemon.mjs source uses only node:https (expected);
-//            evaluate-checkpoint path never imports it.
-//   F02-019  export-daemon.mjs is NOT listed in package.json "files"
-//            (it is a server-side/daemon module, not part of the evaluator bundle).
-//            NOTE: This assertion is informational; the design allows it to be published
-//            only if keeping it in core/ and out of the evaluator import graph is enforced.
+//   F02-018  No-egress: export-daemon.mjs (now in daemon/, not core/) source uses
+//            only node:https (expected); no evaluator core/ file ever imports it.
+//            Also asserts export-daemon.mjs does not exist under core/ anymore --
+//            PR #62 hardening: the boundary is a directory fact, not just a
+//            source-scan convention test.
+//   F02-019  daemon/ is NOT listed in package.json "files" -- export-daemon.mjs
+//            can never ship in the published npm package (structural, not just
+//            "not imported"), on top of re-confirming the checkpoint module
+//            itself has no network imports.
 //
 // Run: node test/append-only-checkpoint.test.mjs
 
@@ -46,7 +49,7 @@ import {
   parseExportConfig,
   readCheckpointLines,
   exportBatch,
-} from '../core/export-daemon.mjs';
+} from '../daemon/export-daemon.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -459,19 +462,34 @@ console.log('\n--- F02-017  append-only-checkpoint.mjs: no network-call patterns
 console.log('\n--- F02-018  export-daemon.mjs isolation check ---');
 
 {
-  const daemonSrc = fs.readFileSync(path.join(ROOT, 'core/export-daemon.mjs'), 'utf8');
+  // PR #62 hardening: export-daemon.mjs must live OUTSIDE core/ -- structural,
+  // not just a source-scan convention. Check this FIRST so a bad move fails
+  // loudly here rather than producing a confusing ENOENT below.
+  const oldCoreLocation = path.join(ROOT, 'core/export-daemon.mjs');
+  ok('F02-018: export-daemon.mjs does NOT exist under core/ (moved to daemon/)',
+    !fs.existsSync(oldCoreLocation));
 
-  // export-daemon.mjs MAY use node:https (it is the export module).
-  // But it must NOT use fetch() or WebSocket (unexpected egress vectors).
-  const UNEXPECTED = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/];
-  const daemonLines = daemonSrc.split('\n').map((l, i) => [i + 1, l]);
-  const unexpectedHits = daemonLines.filter(([, l]) => UNEXPECTED.some(p => p.test(l)));
-  ok('F02-018: export-daemon.mjs has no unexpected network patterns (fetch/WebSocket/XMLHttpRequest)',
-    unexpectedHits.length === 0,
-    unexpectedHits.length ? unexpectedHits.map(([n, l]) => `L${n}: ${l.trim()}`).join('; ') : '');
+  const daemonPath = path.join(ROOT, 'daemon/export-daemon.mjs');
+  ok('F02-018: daemon/export-daemon.mjs exists', fs.existsSync(daemonPath));
+  if (!fs.existsSync(daemonPath)) {
+    // Nothing further to check without the file; avoid a hard crash below.
+  } else {
+    const daemonSrc = fs.readFileSync(daemonPath, 'utf8');
+
+    // export-daemon.mjs MAY use node:https (it is the export module).
+    // But it must NOT use fetch() or WebSocket (unexpected egress vectors).
+    const UNEXPECTED = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/];
+    const daemonLines = daemonSrc.split('\n').map((l, i) => [i + 1, l]);
+    const unexpectedHits = daemonLines.filter(([, l]) => UNEXPECTED.some(p => p.test(l)));
+    ok('F02-018: export-daemon.mjs has no unexpected network patterns (fetch/WebSocket/XMLHttpRequest)',
+      unexpectedHits.length === 0,
+      unexpectedHits.length ? unexpectedHits.map(([n, l]) => `L${n}: ${l.trim()}`).join('; ') : '');
+  }
 
   // Evaluator-side modules (core/ = published, evaluator path) must NOT import export-daemon.mjs.
   // Check for actual import statements only (not doc-comment mentions).
+  // PR #62 hardening: missing/renamed files now produce an attributable test
+  // failure instead of an unhandled readFileSync exception crashing the suite.
   const EVALUATOR_MODULES = [
     'core/append-only-checkpoint.mjs',
     'core/ledger.mjs',
@@ -483,18 +501,33 @@ console.log('\n--- F02-018  export-daemon.mjs isolation check ---');
     'core/local-ipc-identity.mjs',
   ];
   for (const rel of EVALUATOR_MODULES) {
-    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const abs = path.join(ROOT, rel);
+    if (!fs.existsSync(abs)) {
+      ok(`F02-018: ${rel} does NOT import export-daemon.mjs`, false, `file not found: ${rel}`);
+      continue;
+    }
+    const text = fs.readFileSync(abs, 'utf8');
     // Only flag actual ES module import statements, not doc-comment prose.
     const hasImport = /^\s*import\s[\s\S]*?['"].*export-daemon/m.test(text) ||
                       /\bimport\s*\(\s*['"].*export-daemon/.test(text) ||
                       /require\s*\(\s*['"].*export-daemon/.test(text);
     ok(`F02-018: ${rel} does NOT import export-daemon.mjs`, !hasImport);
   }
+
+  // PR #62 hardening: daemon/ must not be in package.json "files" -- this
+  // makes "export-daemon.mjs never ships in the npm package" a structural
+  // fact, not just an unimport claim (the daemon-move alone doesn't prove
+  // this without checking the publish manifest).
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const files = Array.isArray(pkg.files) ? pkg.files : [];
+  ok('F02-019: package.json "files" does NOT include daemon/ (never published to npm)',
+    !files.some((f) => f === 'daemon' || f.startsWith('daemon/')));
 }
 
 // ===========================================================================
-// F02-019  Structural: export-daemon.mjs is in core/ but NOT imported by
-//          append-only-checkpoint.mjs (evaluator boundary enforced in source)
+// F02-019  Structural: export-daemon.mjs lives in daemon/ (not core/) and is
+//          NOT imported by append-only-checkpoint.mjs (evaluator boundary
+//          enforced both by directory placement and in source)
 // ===========================================================================
 console.log('\n--- F02-019  Structural separation: evaluator never requires daemon ---');
 

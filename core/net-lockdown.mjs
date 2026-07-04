@@ -389,19 +389,15 @@ function _probeWin32() {
  */
 function _win32IsAppContainer() {
   if (PLATFORM !== 'win32') return false;
-  try {
-    const r = spawnSync('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-Command',
-      // IsAppContainer property on the current WindowsIdentity (available .NET 4.5+)
-      '[System.Security.Principal.WindowsIdentity]::GetCurrent().IsContainerApplication | Write-Host',
-    ], { stdio: 'pipe', encoding: 'utf8', timeout: 8000 });
-    if (r.status === 0) {
-      return (r.stdout || '').trim().toLowerCase() === 'true';
-    }
-    return false;
-  } catch {
-    return false;
-  }
+  // PR #60 Architect finding: WindowsIdentity has no `.IsContainerApplication`
+  // property -- that PowerShell call referenced a nonexistent .NET member, so
+  // this always silently returned false regardless of actual AppContainer
+  // status. Real AppContainer detection needs the process token's
+  // TokenIsAppContainer info class (native GetTokenInformation call), which
+  // is packaging/native-binding territory, not something to bolt on here
+  // untested. Being honest about the gap beats a heuristic we can't verify:
+  // always report false/unknown, same as before, without the dead call.
+  return false;
 }
 
 // ---------------------------------------------------------------------------

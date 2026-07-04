@@ -112,6 +112,12 @@ if (flags.has('--no-serve')) {
 }
 
 console.log('\nStarting the local MCP server (Ctrl+C to stop)...\n');
-const mcp = spawn(NODE, [mcpServer, cityJson], { stdio: 'inherit' });
+// F0.5: place the evaluator-facing MCP server inside the OS-level network
+// lockdown when the platform supports it (core/net-lockdown.mjs).
+const { wrapArgsForLockdown } = await import('../core/net-lockdown.mjs');
+const _lockdownPrefix = wrapArgsForLockdown();
+const mcp = _lockdownPrefix.length
+  ? spawn(_lockdownPrefix[0], [..._lockdownPrefix.slice(1), NODE, mcpServer, cityJson], { stdio: 'inherit' })
+  : spawn(NODE, [mcpServer, cityJson], { stdio: 'inherit' });
 mcp.on('exit', c => process.exit(c || 0));
 process.on('SIGINT', () => { try { mcp.kill(); } catch (_) {} process.exit(0); });

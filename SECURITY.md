@@ -41,6 +41,38 @@ KnoSky's local trust model applies the core security principles of TUF — role 
 
 HWM-file integrity (the `ledger.hwm.json` high-water-mark guard introduced in SAT-443) is part of KnoSky's local trust boundary: an attacker who can delete or modify that file — or any file under KnoSky's data directory — already has local write access to the machine, which is equivalent to controlling KnoSky's own code. This is the same boundary D-164 draws for the trust root generally; no fully-local, no-egress tool can defend against an attacker with local filesystem write access without a remote or hardware anchor, which would violate KnoSky's core no-egress design principle.
 
+## Opt-in org export (SAT-546)
+
+KnoSky's core tool -- everything an `npm install knosky` / `npx knosky` user
+runs (the indexer, the local MCP server, `bin/knosky.mjs`) -- is no-egress by
+default and always, with zero exceptions inside this repository.
+
+An organization that wants to also mirror its local append-only checkpoint
+(`core/append-only-checkpoint.mjs`) to storage it owns can do so via a
+**completely separate package and repository**:
+[**knosky-export-daemon**](https://github.com/SathiaAI/knosky-export-daemon).
+
+- **Separate package, separate repo, separate install.** This repository does
+  not import, require, `dependencies`-reference, or ship any part of
+  `knosky-export-daemon` -- enforced by an automated whole-repo test
+  (`test/append-only-checkpoint.test.mjs`, F02-020/F02-021: no file or
+  directory named "daemon" or matching "export-daemon" exists anywhere in
+  this repo, and `package.json` declares no dependency on it). Installing
+  `knosky` never installs it; an organization must run a second, deliberate
+  `npm install knosky-export-daemon`.
+- **Off by default, explicit config required.** The daemon does nothing
+  without a config file the org must create themselves, naming an HTTPS
+  destination **the org itself owns** -- never a Sathia/KnoSky-operated
+  endpoint. `parseExportConfig` rejects a missing, disabled, or non-HTTPS
+  config.
+- **Loud at runtime.** Starting the daemon prints an explicit warning that it
+  makes real network calls and is not part of KnoSky's no-egress core tool,
+  before doing anything else.
+- **Purpose:** the append-only local file is the guarantee; the export daemon
+  in the other repo is an optional convenience layered on top of it for an
+  org that wants an off-machine copy -- never a replacement for, or a
+  dependency of, the local checkpoint itself.
+
 ## Scope
 
 In scope: injection in generated artifacts, secret leakage through projections, the local MCP server, and the indexer's privacy defaults. Out of scope: issues that require an attacker to already control your machine or your repository's contents with your knowledge.

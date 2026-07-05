@@ -1,5 +1,12 @@
 // KnoSky F0.2 — Append-only checkpoint tests (SAT-546).
 //
+// PR #62 round-5 (2026-07-05): the export daemon was split out of this repo
+// entirely into a separate package/repo, SathiaAI/knosky-export-daemon.
+// knosky never imports, requires, or ships that package -- see F02-020/F02-021
+// below and SECURITY.md, "Opt-in org export". Its own functional tests
+// (parseExportConfig / readCheckpointLines / exportBatch) now live in that
+// separate repo's test suite, not here.
+//
 // Coverage:
 //   F02-001  appendCheckpointEntry writes a valid JSONL line.
 //   F02-002  Multiple calls append — never overwrite.
@@ -7,27 +14,18 @@
 //   F02-004  openCheckpoint creates the file and parent dirs; idempotent.
 //   F02-005  setAppendOnlyAttribute returns a structured result; never throws.
 //   F02-006  EVALUATOR_NO_NETWORK_SENTINEL is the expected constant string.
-//   F02-007  export-daemon.mjs is NOT imported by append-only-checkpoint.mjs
-//            (evaluator isolation — no network in evaluator).
-//   F02-008  parseExportConfig: off-by-default (null/false/absent → ok=false).
-//   F02-009  parseExportConfig: missing/non-HTTPS destination → ok=false.
-//   F02-010  parseExportConfig: valid HTTPS destination → ok=true.
-//   F02-011  parseExportConfig: non-HTTPS (http://) destination → ok=false.
-//   F02-012  readCheckpointLines reads and parses JSONL correctly.
-//   F02-013  readCheckpointLines skips blank lines, warns on malformed JSON.
-//   F02-014  readCheckpointLines respects startLine cursor and limit.
-//   F02-015  exportBatch returns exhausted=true when checkpoint has no new lines.
-//   F02-016  exportBatch returns ok=false on filesystem error (missing file).
-//   F02-017  No-egress: append-only-checkpoint.mjs source has no network-call patterns.
-//   F02-018  No-egress: export-daemon.mjs (now in daemon/, not core/) source uses
-//            only node:https (expected); no evaluator core/ file ever imports it.
-//            Also asserts export-daemon.mjs does not exist under core/ anymore --
-//            PR #62 hardening: the boundary is a directory fact, not just a
-//            source-scan convention test.
-//   F02-019  daemon/ is NOT listed in package.json "files" -- export-daemon.mjs
-//            can never ship in the published npm package (structural, not just
-//            "not imported"), on top of re-confirming the checkpoint module
-//            itself has no network imports.
+//   F02-007  no evaluator-path module imports an "export-daemon" module by
+//            name (evaluator isolation — the evaluator never gains network
+//            capability, whether or not the separate export-daemon package
+//            is installed).
+//   F02-017  No-egress: append-only-checkpoint.mjs source has no network-call
+//            patterns (checkpoint module never touches the network itself).
+//   F02-020  No file or directory named "daemon" or matching "export-daemon"
+//            exists ANYWHERE in this repo — the export daemon was split into
+//            a fully separate package/repo (SathiaAI/knosky-export-daemon);
+//            this repo cannot ship it even by accident.
+//   F02-021  package.json declares no dependency on "knosky-export-daemon" —
+//            knosky itself has zero coupling to the export package.
 //
 // Run: node test/append-only-checkpoint.test.mjs
 
@@ -44,12 +42,6 @@ import {
   setAppendOnlyAttribute,
   EVALUATOR_NO_NETWORK_SENTINEL,
 } from '../core/append-only-checkpoint.mjs';
-
-import {
-  parseExportConfig,
-  readCheckpointLines,
-  exportBatch,
-} from '../daemon/export-daemon.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -240,201 +232,6 @@ console.log('\n--- F02-007  evaluator isolation: checkpoint does not import expo
 }
 
 // ===========================================================================
-// F02-008  parseExportConfig: off by default
-// ===========================================================================
-console.log('\n--- F02-008  parseExportConfig: off-by-default ---');
-
-{
-  for (const absent of [null, undefined, false]) {
-    const r = parseExportConfig(absent);
-    ok(`F02-008: parseExportConfig(${JSON.stringify(absent)}) → ok=false`, r.ok === false,
-      JSON.stringify(r));
-    ok(`F02-008: error is export_not_configured for ${JSON.stringify(absent)}`,
-      r.error === 'export_not_configured', r.error);
-  }
-}
-
-// ===========================================================================
-// F02-009  parseExportConfig: missing/malformed destination → ok=false
-// ===========================================================================
-console.log('\n--- F02-009  parseExportConfig: invalid destination ---');
-
-{
-  const cases = [
-    [{}, 'export_config_missing_destination'],
-    [{ destination: null }, 'export_config_missing_destination'],
-    [{ destination: 'not-an-object' }, 'export_config_missing_destination'],
-    [{ destination: {} }, 'export_destination_url_missing'],
-    [{ destination: { url: '' } }, 'export_destination_url_missing'],
-    [{ destination: { url: 'not-a-url' } }, 'export_destination_url_invalid: not-a-url'],
-  ];
-  for (const [cfg, expectedErr] of cases) {
-    const r = parseExportConfig(cfg);
-    ok(`F02-009: ok=false for ${JSON.stringify(cfg).slice(0, 60)}`, r.ok === false,
-      JSON.stringify(r));
-    ok(`F02-009: error starts with ${expectedErr.slice(0, 40)}`,
-      typeof r.error === 'string' && r.error.startsWith(expectedErr.split(':')[0]),
-      r.error);
-  }
-}
-
-// ===========================================================================
-// F02-010  parseExportConfig: valid HTTPS destination → ok=true
-// ===========================================================================
-console.log('\n--- F02-010  parseExportConfig: valid HTTPS destination ---');
-
-{
-  const cfg = {
-    destination: {
-      url: 'https://logs.example-org.com/knosky/ingest',
-      headers: { Authorization: 'Bearer secret' },
-    },
-  };
-  const r = parseExportConfig(cfg);
-  ok('F02-010: ok=true for valid HTTPS destination', r.ok === true, JSON.stringify(r));
-  ok('F02-010: config.destination.url preserved', r.config?.destination?.url === cfg.destination.url);
-  ok('F02-010: config.destination.headers preserved',
-    r.config?.destination?.headers?.Authorization === 'Bearer secret');
-  ok('F02-010: config.batchSize is DEFAULT_BATCH_SIZE (100)',
-    r.config?.batchSize === 100, String(r.config?.batchSize));
-  ok('F02-010: config.retryMax is DEFAULT_RETRY_MAX (3)',
-    r.config?.retryMax === 3, String(r.config?.retryMax));
-
-  // Custom batchSize / retryMax respected.
-  const cfg2 = { destination: { url: 'https://org.example/ep' }, batchSize: 50, retryMax: 1 };
-  const r2 = parseExportConfig(cfg2);
-  ok('F02-010: custom batchSize=50 respected', r2.config?.batchSize === 50);
-  ok('F02-010: custom retryMax=1 respected', r2.config?.retryMax === 1);
-}
-
-// ===========================================================================
-// F02-011  parseExportConfig: http:// (non-HTTPS) destination → ok=false
-// ===========================================================================
-console.log('\n--- F02-011  parseExportConfig: http:// rejected ---');
-
-{
-  const r = parseExportConfig({ destination: { url: 'http://org.example/ep' } });
-  ok('F02-011: http:// destination is rejected', r.ok === false, JSON.stringify(r));
-  ok('F02-011: error mentions must_be_https',
-    typeof r.error === 'string' && r.error.includes('must_be_https'), r.error);
-}
-
-// ===========================================================================
-// F02-012  readCheckpointLines reads and parses JSONL correctly
-// ===========================================================================
-console.log('\n--- F02-012  readCheckpointLines reads JSONL ---');
-
-{
-  const p = testPath('f02-012.jsonl');
-  const entries = [
-    { seq: 1, event: 'a' },
-    { seq: 2, event: 'b' },
-    { seq: 3, event: 'c' },
-  ];
-  for (const e of entries) appendCheckpointEntry(p, e);
-
-  const { entries: read, nextLine } = await readCheckpointLines(p, 0, 10);
-  ok('F02-012: reads 3 entries', read.length === 3, String(read.length));
-  ok('F02-012: entry 0 is seq=1', read[0].seq === 1);
-  ok('F02-012: entry 1 is seq=2', read[1].seq === 2);
-  ok('F02-012: entry 2 is seq=3', read[2].seq === 3);
-  ok('F02-012: nextLine is 3', nextLine === 3, String(nextLine));
-}
-
-// ===========================================================================
-// F02-013  readCheckpointLines skips blank lines; warns on malformed JSON
-// ===========================================================================
-console.log('\n--- F02-013  readCheckpointLines: blank/malformed handling ---');
-
-{
-  const p = testPath('f02-013.jsonl');
-  // Write a file with blank lines and one malformed line.
-  const content = [
-    '{"seq":1,"event":"ok1"}',
-    '',                                   // blank
-    'NOT VALID JSON',                     // malformed — should be skipped with warning
-    '{"seq":2,"event":"ok2"}',
-    '',                                   // trailing blank
-  ].join('\n') + '\n';
-  writeFileSync(p, content, 'utf8');
-
-  // Capture warnings emitted during parsing.
-  const warnings = [];
-  const origWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(' '));
-
-  const { entries: read } = await readCheckpointLines(p, 0, 10);
-
-  console.warn = origWarn;   // restore
-
-  ok('F02-013: 2 valid entries returned (blank + malformed skipped)',
-    read.length === 2, String(read.length));
-  ok('F02-013: entry 0 is seq=1', read[0]?.seq === 1);
-  ok('F02-013: entry 1 is seq=2', read[1]?.seq === 2);
-  ok('F02-013: warning emitted for malformed line',
-    warnings.some(w => w.includes('malformed') || w.includes('export-daemon')),
-    warnings.join('; ').slice(0, 200));
-}
-
-// ===========================================================================
-// F02-014  readCheckpointLines respects startLine and limit
-// ===========================================================================
-console.log('\n--- F02-014  readCheckpointLines: startLine and limit ---');
-
-{
-  const p = testPath('f02-014.jsonl');
-  for (let i = 1; i <= 5; i++) appendCheckpointEntry(p, { seq: i });
-
-  // Read from line 2 (0-indexed), limit 2.
-  const { entries: read, nextLine } = await readCheckpointLines(p, 2, 2);
-  ok('F02-014: 2 entries returned', read.length === 2, String(read.length));
-  ok('F02-014: first entry is seq=3 (skip first 2 lines)', read[0].seq === 3,
-    String(read[0].seq));
-  ok('F02-014: second entry is seq=4', read[1].seq === 4, String(read[1].seq));
-  ok('F02-014: nextLine is 4 (startLine + entries read)', nextLine === 4, String(nextLine));
-}
-
-// ===========================================================================
-// F02-015  exportBatch returns exhausted=true when no new lines
-// ===========================================================================
-console.log('\n--- F02-015  exportBatch exhausted=true on empty cursor ---');
-
-{
-  const p = testPath('f02-015.jsonl');
-  // Write 2 entries.
-  appendCheckpointEntry(p, { seq: 1 });
-  appendCheckpointEntry(p, { seq: 2 });
-
-  const cfgResult = parseExportConfig({
-    destination: { url: 'https://org.example/ep' },
-  });
-  ok('F02-015: config parsed ok', cfgResult.ok === true);
-
-  // Start cursor at 2 (past the end) — no new entries.
-  const result = await exportBatch(cfgResult.config, p, 2);
-  ok('F02-015: ok=true', result.ok === true, JSON.stringify(result));
-  ok('F02-015: exhausted=true', result.exhausted === true);
-  ok('F02-015: exported=0', result.exported === 0);
-  ok('F02-015: nextLine=2 (unchanged)', result.nextLine === 2, String(result.nextLine));
-}
-
-// ===========================================================================
-// F02-016  exportBatch returns ok=false on filesystem read error
-// ===========================================================================
-console.log('\n--- F02-016  exportBatch ok=false for missing checkpoint file ---');
-
-{
-  const p = testPath('does-not-exist-f02-016.jsonl');
-  const cfgResult = parseExportConfig({ destination: { url: 'https://org.example/ep' } });
-
-  const result = await exportBatch(cfgResult.config, p, 0);
-  ok('F02-016: ok=false when checkpoint file missing', result.ok === false, JSON.stringify(result));
-  ok('F02-016: error is a non-empty string', typeof result.error === 'string' && result.error.length > 0,
-    result.error);
-  ok('F02-016: nextLine unchanged at 0', result.nextLine === 0, String(result.nextLine));
-}
-
-// ===========================================================================
 // F02-017  No-egress: append-only-checkpoint.mjs has no network-call patterns
 // ===========================================================================
 console.log('\n--- F02-017  append-only-checkpoint.mjs: no network-call patterns ---');
@@ -456,95 +253,52 @@ console.log('\n--- F02-017  append-only-checkpoint.mjs: no network-call patterns
 }
 
 // ===========================================================================
-// F02-018  No-egress: export-daemon.mjs uses only node:https (expected);
-//          evaluator core files never import it
+
 // ===========================================================================
-console.log('\n--- F02-018  export-daemon.mjs isolation check ---');
+// F02-020  Structural: no "daemon" dir or "export-daemon" file anywhere in
+//          this repo — the export daemon lives in a fully separate package
+//          (SathiaAI/knosky-export-daemon), not just a different directory
+//          within this one.
+// ===========================================================================
+console.log('\n--- F02-020  export-daemon is not present anywhere in this repo ---');
 
 {
-  // PR #62 hardening: export-daemon.mjs must live OUTSIDE core/ -- structural,
-  // not just a source-scan convention. Check this FIRST so a bad move fails
-  // loudly here rather than producing a confusing ENOENT below.
-  const oldCoreLocation = path.join(ROOT, 'core/export-daemon.mjs');
-  ok('F02-018: export-daemon.mjs does NOT exist under core/ (moved to daemon/)',
-    !fs.existsSync(oldCoreLocation));
-
-  const daemonPath = path.join(ROOT, 'daemon/export-daemon.mjs');
-  ok('F02-018: daemon/export-daemon.mjs exists', fs.existsSync(daemonPath));
-  if (!fs.existsSync(daemonPath)) {
-    // Nothing further to check without the file; avoid a hard crash below.
-  } else {
-    const daemonSrc = fs.readFileSync(daemonPath, 'utf8');
-
-    // export-daemon.mjs MAY use node:https (it is the export module).
-    // But it must NOT use fetch() or WebSocket (unexpected egress vectors).
-    const UNEXPECTED = [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/];
-    const daemonLines = daemonSrc.split('\n').map((l, i) => [i + 1, l]);
-    const unexpectedHits = daemonLines.filter(([, l]) => UNEXPECTED.some(p => p.test(l)));
-    ok('F02-018: export-daemon.mjs has no unexpected network patterns (fetch/WebSocket/XMLHttpRequest)',
-      unexpectedHits.length === 0,
-      unexpectedHits.length ? unexpectedHits.map(([n, l]) => `L${n}: ${l.trim()}`).join('; ') : '');
-  }
-
-  // Evaluator-side modules (core/ = published, evaluator path) must NOT import export-daemon.mjs.
-  // Check for actual import statements only (not doc-comment mentions).
-  // PR #62 hardening: missing/renamed files now produce an attributable test
-  // failure instead of an unhandled readFileSync exception crashing the suite.
-  const EVALUATOR_MODULES = [
-    'core/append-only-checkpoint.mjs',
-    'core/ledger.mjs',
-    'core/key-store.mjs',
-    'core/config.mjs',
-    'core/constants.mjs',
-    'core/freshness.mjs',
-    'core/schema.mjs',
-    'core/local-ipc-identity.mjs',
-  ];
-  for (const rel of EVALUATOR_MODULES) {
-    const abs = path.join(ROOT, rel);
-    if (!fs.existsSync(abs)) {
-      ok(`F02-018: ${rel} does NOT import export-daemon.mjs`, false, `file not found: ${rel}`);
-      continue;
+  const walk = (dir) => {
+    let hits = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '.git') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'daemon') hits.push(full);
+        hits = hits.concat(walk(full));
+      } else if (/export-daemon/i.test(entry.name)) {
+        hits.push(full);
+      }
     }
-    const text = fs.readFileSync(abs, 'utf8');
-    // Only flag actual ES module import statements, not doc-comment prose.
-    const hasImport = /^\s*import\s[\s\S]*?['"].*export-daemon/m.test(text) ||
-                      /\bimport\s*\(\s*['"].*export-daemon/.test(text) ||
-                      /require\s*\(\s*['"].*export-daemon/.test(text);
-    ok(`F02-018: ${rel} does NOT import export-daemon.mjs`, !hasImport);
-  }
-
-  // PR #62 hardening: daemon/ must not be in package.json "files" -- this
-  // makes "export-daemon.mjs never ships in the npm package" a structural
-  // fact, not just an unimport claim (the daemon-move alone doesn't prove
-  // this without checking the publish manifest).
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  const files = Array.isArray(pkg.files) ? pkg.files : [];
-  ok('F02-019: package.json "files" does NOT include daemon/ (never published to npm)',
-    !files.some((f) => f === 'daemon' || f.startsWith('daemon/')));
+    return hits;
+  };
+  const hits = walk(ROOT);
+  ok('F02-020: no "daemon" directory or "export-daemon" file anywhere in this repo',
+    hits.length === 0,
+    hits.length ? hits.map((h) => path.relative(ROOT, h)).join('; ') : '');
 }
 
 // ===========================================================================
-// F02-019  Structural: export-daemon.mjs lives in daemon/ (not core/) and is
-//          NOT imported by append-only-checkpoint.mjs (evaluator boundary
-//          enforced both by directory placement and in source)
+// F02-021  Structural: package.json has no dependency on knosky-export-daemon
+//          — knosky itself never depends on the separate export package.
 // ===========================================================================
-console.log('\n--- F02-019  Structural separation: evaluator never requires daemon ---');
+console.log('\n--- F02-021  package.json has zero coupling to knosky-export-daemon ---');
 
 {
-  // This test re-confirms F02-007 at a source / static level.
-  const checkpointSrc = fs.readFileSync(
-    path.join(ROOT, 'core/append-only-checkpoint.mjs'), 'utf8');
-
-  // No dynamic import of export-daemon either.
-  const hasDynamic = /import\s*\(\s*['"].*export-daemon/.test(checkpointSrc);
-  ok('F02-019: no import() of export-daemon in checkpoint module', !hasDynamic);
-
-  // No https, no net, no dns in the checkpoint module.
-  const hasHttps = /node:https/.test(checkpointSrc);
-  const hasNet   = /\bnode:net\b/.test(checkpointSrc);
-  ok('F02-019: checkpoint module does not import node:https', !hasHttps);
-  ok('F02-019: checkpoint module does not import node:net', !hasNet);
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const allDeps = {
+    ...(pkg.dependencies || {}),
+    ...(pkg.devDependencies || {}),
+    ...(pkg.optionalDependencies || {}),
+    ...(pkg.peerDependencies || {}),
+  };
+  ok('F02-021: package.json does not depend on knosky-export-daemon',
+    !Object.keys(allDeps).some((d) => d === 'knosky-export-daemon'));
 }
 
 // ---------------------------------------------------------------------------

@@ -3,25 +3,31 @@
 // Implements a three-tier hierarchy for signing credentials:
 //
 //   Tier 1  — TPM / Secure Enclave non-extractable key
-//             Detected via the SubtleCrypto `extractable: false` API backed by the
-//             platform TPM (Win 11 TPM2, Apple T1/T2/Secure Enclave, Linux via
-//             tpm2-tools).  Honestly labeled "software" when the platform cannot
-//             provide a non-extractable binding.
+//             Detected via the SubtleCrypto `extractable: false` API. Honestly
+//             labeled "software" whenever hardware backing cannot be positively
+//             confirmed — this module never assumes a platform has a TPM/Secure
+//             Enclave just because the OS could theoretically have one.
 //
 //   Tier 2  — FIDO2 / WebAuthn attested hardware key
-//             A pre-registered hardware authenticator credential.  Registration
-//             REQUIRES a full x5c attestation certificate-chain verification against
-//             the FIDO MDS root CA (not just AAGUID match).  Self-asserted BE flag
-//             alone is spoofable (round-3 review); the backup-eligible (BE) flag must
-//             additionally be 0 after independent x5c verification.  Synced or
-//             backup-eligible credentials are accepted only as Tier-3-equivalent.
-//             Fresh 32-byte challenge per ceremony, never reused.
+//             A pre-registered hardware authenticator credential, verified with
+//             @simplewebauthn/server (full x5c attestation certificate-chain
+//             verification against caller-supplied trusted root CAs, FIDO
+//             conformance-level certificate field checks, AAGUID cross-check).
+//             Self-asserted "backup eligible" flag alone is spoofable; a
+//             synced/backup-eligible credential (independently confirmed via
+//             the verified attestation, not a self-report) is demoted to
+//             Tier-3-equivalent. Fresh 32-byte challenge per ceremony, never
+//             reused.
 //
 //   Tier 3  — RFC 6238 TOTP (software + TOTP)
-//             Standard 30-second window TOTP.  Rate-limited: 5 attempts per 10-minute
-//             window; backoff (exponential, max 60 s) after 3 consecutive failures.
-//             `knosky doctor` emits a structured warning when Tier 3 is active and the
-//             system clock appears unsynced (drift > 24 h from reference).
+//             Standard 30-second window TOTP via otplib, backed by Node's own
+//             `node:crypto` HMAC (no additional crypto implementation pulled
+//             in — @otplib/plugin-crypto-node is a thin wrapper over
+//             `createHmac`/`randomBytes`/`timingSafeEqual`). Rate-limited: 5
+//             attempts per 10-minute window; backoff (exponential, max 60 s)
+//             after 3 consecutive failures. `knosky doctor` emits a structured
+//             warning when Tier 3 is active and the system clock appears
+//             unsynced (drift > 24 h from reference).
 //
 // governance.yml / minSigningTier:
 //   `governance.yml` in the repo root may contain a `minSigningTier` key scoped
@@ -30,7 +36,9 @@
 //
 // Mixed-tier quorum:
 //   Each signer's tier is recorded in the ledger entry.  The quorum summary tier
-//   is the MINIMUM across all signers — never averaged, never maxed.
+//   is the WEAKEST tier across all signers (the highest TIER.* number, since
+//   lower numbers are stronger) — never averaged, never strengthened by a
+//   stronger co-signer.
 //
 // Unforgeable logging:
 //   The raw WebAuthn assertion bytes are SHA-256 hashed into the EXCEPTION_GRANTED
@@ -38,18 +46,40 @@
 //
 // Downgrade-attack protection:
 //   The tier-detection result together with the active minSigningTier setting are
-//   written through F0.2's tamper-evident checkpoint (signManifest / verifyManifest)
-//   so that those values cannot be rolled back without breaking manifest verification.
+//   hashed into a checkpoint (buildTierCheckpoint/verifyTierCheckpoint) meant to
+//   be carried inside F0.2's signed manifest (signManifest / verifyManifest), so
+//   those values cannot be rolled back without invalidating the manifest
+//   signature. NOTE: wiring this checkpoint into an actual signManifest/
+//   verifyManifest call is tracked separately (see SAT-544 follow-up) — this
+//   module ships the checkpoint primitive itself.
 //
 // Design references: D-193, D-194, OUTPUTS/2026-07-05-KnoSky-F0-F1-DesignGate-v3-Combined.md §F0.1
-// Authority: SAT-544.  Mature libraries: no hand-rolled crypto, pure Node stdlib.
+// Authority: SAT-544.
 //
-// Pure Node stdlib, ESM — no third-party dependencies.
+// Mature libraries, no hand-rolled crypto/CBOR/X.509 parsing:
+//   - @simplewebauthn/server — WebAuthn attestation + assertion verification,
+//     CBOR decoding, X.509 chain validation (Tier 2).
+//   - otplib (TOTP class) + @otplib/plugin-crypto-node (Node-native HMAC via
+//     node:crypto, zero extra crypto dependency) + @otplib/plugin-base32-scure
+//     (audited, zero-dependency Base32) — RFC 6238 TOTP (Tier 3).
+// Requires Node >= 20 (SettingsService/verifyRegistrationResponse's engines
+// floor; this raised the package's overall `engines.node` from >=18 — flagged
+// for Paul's awareness since it affects every knosky user, not just F0).
 
-import { randomBytes, createHash, createHmac, timingSafeEqual, X509Certificate } from 'node:crypto';
-import { webcrypto } from 'node:crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 
-const { subtle } = webcrypto;
+import {
+  verifyRegistrationResponse,
+  verifyAuthenticationResponse,
+  SettingsService,
+} from '@simplewebauthn/server';
+import { TOTP, ScureBase32Plugin } from 'otplib';
+import { NodeCryptoPlugin } from '@otplib/plugin-crypto-node';
+import { decodeCBOR } from '@levischuck/tiny-cbor';
+import { X509Certificate as PeculiarX509Certificate, CRLDistributionPointsExtension } from '@peculiar/x509';
+
 
 // ---------------------------------------------------------------------------
 // Tier constants
@@ -72,17 +102,6 @@ export const TIER_LABELS = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// WebAuthn authenticatorData constants (CTAP2 / WebAuthn Level 3 §6.1)
-// ---------------------------------------------------------------------------
-// flags byte layout
-const FLAG_UP = 0x01;  // user present
-const FLAG_UV = 0x04;  // user verified
-const FLAG_BE = 0x08;  // backup eligible  ← self-asserted, must also be verified by x5c
-const FLAG_BS = 0x10;  // backup state
-const FLAG_AT = 0x40;  // attested credential data present
-const FLAG_ED = 0x80;  // extension data present
-
-// ---------------------------------------------------------------------------
 // TIER 1 — TPM / Secure Enclave detection
 // ---------------------------------------------------------------------------
 
@@ -90,23 +109,23 @@ const FLAG_ED = 0x80;  // extension data present
  * Attempt to generate a non-extractable ECDSA P-256 key backed by the platform
  * TPM or Secure Enclave.  Returns a `{ tier, key, label }` object.
  *
- * When the platform has no hardware key store the SubtleCrypto call still
- * succeeds but `extractable: false` is software-enforced; the returned tier is
- * then TIER.TOTP (software fallback) so callers are never silently misled.
+ * When the platform's hardware key store presence cannot be POSITIVELY
+ * confirmed, this function reports `tpmPresent: false` and falls back to
+ * TIER.TOTP (software), regardless of which OS is running. This module never
+ * infers "this OS version normally ships with a TPM" as a substitute for an
+ * actual, verifiable signal — that inference is exactly the failure mode the
+ * ticket's "honestly labeled software fallback when absent" requirement
+ * exists to prevent.
  *
- * Detection heuristic:
- *   - On Node ≥ 20 the Web Crypto API is backed by BoringSSL (software).
- *     True TPM binding requires the native PKCS#11 / CryptoTokenKit / tpm2-tss
- *     bridge — this module uses SubtleCrypto as the *uniform interface* and
- *     relies on the runtime to back it with hardware when available.
- *   - We check `crypto.hkdf` availability (Node ≥ 15) as a coarse proxy, but
- *     the definitive signal is whether `tpm2_getcap` / `security-chip` is
- *     present in the environment (detected via the probe below).
- *
- * Returns:
- *   `{ tier: TIER.TPM, key, label: 'TPM/Secure Enclave (non-extractable)' }`
- *   or
- *   `{ tier: TIER.TOTP, key: null, label: 'software (no TPM detected)' }`
+ * Only Linux is currently probed with a real signal (kernel TPM resource
+ * manager device node). macOS (Secure Enclave) and Windows (TPM 2.0) require
+ * either a native binding or spawning a platform CLI (`security(1)`,
+ * PowerShell's `Get-Tpm`) to positively confirm hardware presence — this
+ * module deliberately avoids spawning processes to stay side-effect-free and
+ * sandboxable, so those platforms always report `tpmPresent: false` today.
+ * This is a known, intentional gap (fails safe: it can only under-claim tier
+ * strength, never over-claim it) — see the follow-up ticket for native/CLI
+ * probes on those platforms.
  *
  * @returns {Promise<{ tier: number, key: CryptoKey|null, label: string, probeInfo: object }>}
  */
@@ -115,7 +134,8 @@ export async function detectTier1Key() {
 
   let key = null;
   try {
-    key = (await subtle.generateKey(
+    const { webcrypto } = await import('node:crypto');
+    key = (await webcrypto.subtle.generateKey(
       { name: 'ECDSA', namedCurve: 'P-256' },
       false, // non-extractable
       ['sign', 'verify'],
@@ -144,23 +164,18 @@ export async function detectTier1Key() {
 
 /**
  * @internal
- * Probe for TPM / Secure Enclave presence without spawning processes that
- * could cause side-effects.  Returns a structured result rather than throwing.
+ * Probe for TPM presence without spawning processes that could cause
+ * side-effects.  Returns a structured result rather than throwing.
  *
- * Checks:
- *  1. Linux:  presence of /dev/tpmrm0 or /dev/tpm0 (kernel TPM resource mgr)
- *  2. macOS:  presence of IOKit Secure Enclave key-class via security(1) CLI
- *  3. In-process: verify the CryptoKey returned with non-extractable=true
- *     cannot be exported — if the runtime silently upgrades it to extractable,
- *     that is a software-only key store.
+ * Only reports `tpmPresent: true` when a real, verifiable signal exists.
+ * Currently that means: Linux kernel TPM resource-manager device node.
+ * Every other platform (including macOS and Windows, which MAY have a TPM/
+ * Secure Enclave) honestly reports `tpmPresent: false` because this module
+ * has no side-effect-free way to positively confirm it on those platforms.
  *
  * @returns {Promise<{ tpmPresent: boolean, mechanism: string|null, detail: string }>}
  */
 async function _probeTpmPresence() {
-  // We deliberately avoid execFileSync/spawnSync here so the probe stays
-  // side-effect-free and sandboxable.  Pure filesystem + SubtleCrypto API.
-  const fs = await import('node:fs');
-  const os = await import('node:os');
   const platform = os.platform();
 
   if (platform === 'linux') {
@@ -170,28 +185,30 @@ async function _probeTpmPresence() {
         return { tpmPresent: true, mechanism: 'Linux TPM (/dev/tpmrm0|/dev/tpm0)', detail: dev };
       } catch { /* dev not present */ }
     }
+    return { tpmPresent: false, mechanism: null, detail: 'no /dev/tpmrm0 or /dev/tpm0 device node found' };
   }
 
   if (platform === 'darwin') {
-    // Heuristic: Apple T-chip / Secure Enclave is available on all Macs since 2016
-    // (T1 chip) and all MacBooks since 2018 (T2 chip / Apple Silicon).
-    // We cannot probe further without spawning security(1); mark as present on
-    // darwin to avoid silently misclassifying.  The actual non-extractable key
-    // generation above is the enforcing step.
-    return { tpmPresent: true, mechanism: 'Apple Secure Enclave (darwin)', detail: 'heuristic' };
+    return {
+      tpmPresent: false,
+      mechanism: null,
+      detail: 'Secure Enclave presence cannot be confirmed without spawning security(1) or a native IOKit binding; this module does not spawn processes, so darwin always reports software fallback',
+    };
   }
 
   if (platform === 'win32') {
-    // TPM 2.0 is required for Windows 11.  We cannot probe the registry without
-    // spawning PowerShell; mark as potentially present.
-    return { tpmPresent: true, mechanism: 'Windows TPM 2.0 (win32)', detail: 'heuristic' };
+    return {
+      tpmPresent: false,
+      mechanism: null,
+      detail: 'TPM 2.0 presence cannot be confirmed without a native binding or spawning PowerShell (Get-Tpm); this module does not spawn processes, so win32 always reports software fallback',
+    };
   }
 
-  return { tpmPresent: false, mechanism: null, detail: 'no hardware key store detected for platform ' + platform };
+  return { tpmPresent: false, mechanism: null, detail: 'no hardware key store detection implemented for platform ' + platform };
 }
 
 // ---------------------------------------------------------------------------
-// TIER 2 — WebAuthn / FIDO2 registration and assertion
+// TIER 2 — WebAuthn / FIDO2 registration and assertion (@simplewebauthn/server)
 // ---------------------------------------------------------------------------
 
 /**
@@ -209,201 +226,208 @@ export function generateWebAuthnChallenge() {
   };
 }
 
-/**
- * Parse and validate a WebAuthn authenticatorData buffer.
- *
- * Returns the structured fields or throws with a descriptive message on any
- * parse error.  Does NOT verify the assertion signature or attestation chain
- * (those are separate steps).
- *
- * Layout (CTAP2 §8.2 / WebAuthn §6.1):
- *   rpIdHash          [0..31]  — 32 bytes
- *   flags             [32]     — 1 byte
- *   signCount         [33..36] — 4 bytes big-endian
- *   attestedCredData  [37..]   — if AT flag set
- *     aaguid          [37..52] — 16 bytes
- *     credIdLen       [53..54] — 2 bytes big-endian
- *     credId          [55..55+credIdLen-1]
- *     credPublicKey   [55+credIdLen..] — CBOR-encoded COSE key
- *
- * @param {Buffer|Uint8Array} authData
- * @returns {{
- *   rpIdHash: Buffer,
- *   flags: number,
- *   flagsDecoded: { UP: boolean, UV: boolean, BE: boolean, BS: boolean, AT: boolean, ED: boolean },
- *   signCount: number,
- *   aaguid: Buffer|null,
- *   credId: Buffer|null,
- *   credPublicKeyRaw: Buffer|null,
- * }}
- */
-export function parseAuthenticatorData(authData) {
-  const buf = Buffer.isBuffer(authData) ? authData : Buffer.from(authData);
-  if (buf.length < 37) {
-    throw new Error('parseAuthenticatorData: buffer too short (minimum 37 bytes)');
-  }
+/** @internal base64url-encode raw bytes for the wire-format envelope the library expects. */
+function _b64u(bufLike) {
+  return Buffer.isBuffer(bufLike) ? bufLike.toString('base64url') : Buffer.from(bufLike).toString('base64url');
+}
 
-  const rpIdHash = buf.subarray(0, 32);
-  const flags = buf[32];
-  const signCount = buf.readUInt32BE(33);
-
-  const flagsDecoded = {
-    UP: !!(flags & FLAG_UP),
-    UV: !!(flags & FLAG_UV),
-    BE: !!(flags & FLAG_BE),
-    BS: !!(flags & FLAG_BS),
-    AT: !!(flags & FLAG_AT),
-    ED: !!(flags & FLAG_ED),
+/** @internal constant-time challenge comparator, used as the library's `expectedChallenge` function-form. */
+function _makeChallengeComparator(expectedChallenge) {
+  const expB64 = typeof expectedChallenge === 'string' ? expectedChallenge : _b64u(expectedChallenge);
+  return (receivedChallengeB64) => {
+    try {
+      const a = Buffer.from(receivedChallengeB64, 'base64url');
+      const b = Buffer.from(expB64, 'base64url');
+      return a.length === b.length && timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
   };
+}
 
-  let aaguid = null;
-  let credId = null;
-  let credPublicKeyRaw = null;
+// Placeholder credential id/rawId used only to satisfy the library's
+// RegistrationResponseJSON/AuthenticationResponseJSON shape. The library does
+// NOT cross-validate this against the credential id embedded in the
+// attestation object/authenticatorData for either verification path — it only
+// requires `id === rawId` and both being present. The authoritative
+// credential id is `result.registrationInfo.credential.id`, derived by the
+// library from the parsed authenticatorData itself.
+const _PLACEHOLDER_CRED_ID = Buffer.from('knosky-f01-placeholder-credential-id').toString('base64url');
 
-  if (flagsDecoded.AT) {
-    if (buf.length < 55) {
-      throw new Error('parseAuthenticatorData: AT flag set but buffer too short for attestedCredentialData');
-    }
-    aaguid = buf.subarray(37, 53);
-    const credIdLen = buf.readUInt16BE(53);
-    const credIdEnd = 55 + credIdLen;
-    if (buf.length < credIdEnd) {
-      throw new Error('parseAuthenticatorData: credId overruns buffer');
-    }
-    credId = buf.subarray(55, credIdEnd);
-    credPublicKeyRaw = buf.subarray(credIdEnd);
+/**
+ * @internal
+ * KnoSky is a no-egress tool (SECURITY.md). @simplewebauthn/server's x5c
+ * chain validation (`validateCertificatePath` -> `isCertRevoked`) performs a
+ * real outbound `fetch()` to a certificate's CRL Distribution Point URL IF
+ * the presented certificate embeds one — this is attacker/authenticator-
+ * influenced input, not something KnoSky's own code chooses to do. Real FIDO
+ * authenticator attestation certs conventionally omit CRL distribution
+ * points, but nothing stops a crafted attestation from including one.
+ *
+ * To preserve the no-egress guarantee unconditionally, this module decodes
+ * the attestation object's x5c chain itself (via the same mature CBOR/X.509
+ * libraries @simplewebauthn/server already depends on — no hand-rolled
+ * parsing) and rejects outright, before ever calling into the library, if any
+ * certificate in the chain carries a CRL Distribution Points extension.
+ *
+ * @param {Buffer} attestationObjectBytes
+ * @returns {string|null} a rejection reason, or null if no CRL extension was found
+ */
+function _rejectIfCrlDistributionPoint(attestationObjectBytes) {
+  let decoded;
+  try {
+    decoded = decodeCBOR(new Uint8Array(attestationObjectBytes));
+  } catch {
+    // Malformed CBOR — let verifyRegistrationResponse's own parsing produce
+    // the real, user-facing error message for this case.
+    return null;
   }
 
-  return { rpIdHash, flags, flagsDecoded, signCount, aaguid, credId, credPublicKeyRaw };
+  const attStmt = decoded instanceof Map ? decoded.get('attStmt') : null;
+  const x5c = attStmt instanceof Map ? attStmt.get('x5c') : null;
+  if (!Array.isArray(x5c)) return null;
+
+  for (const certDer of x5c) {
+    try {
+      const bytes = certDer instanceof Uint8Array ? certDer : new Uint8Array(certDer);
+      const cert = new PeculiarX509Certificate(bytes);
+      const hasCrlExtension = cert.extensions.some(ext => ext instanceof CRLDistributionPointsExtension);
+      if (hasCrlExtension) {
+        return 'certificate in x5c embeds a CRL Distribution Points extension; rejected to preserve KnoSky\'s no-egress guarantee (no revocation-check network fetch is ever performed)';
+      }
+    } catch {
+      // Malformed certificate — let the real verification path's own parsing
+      // surface this error with better context than we could here.
+      continue;
+    }
+  }
+  return null;
 }
 
 /**
  * Verify a WebAuthn attestation registration response.
  *
- * CRITICAL security properties:
- *   1. Full x5c certificate-chain verification against the supplied trustedRoots
- *      (MUST include the FIDO MDS3 root or a site-specific root CA).
- *      Self-asserted AAGUID or BE flag alone are not sufficient (round-3 review).
- *   2. Backup-eligible (BE flag) must be 0 in the authenticatorData.  A BE=1
- *      credential (synced/cloud-backup eligible) is demoted to Tier-3-equivalent.
- *   3. Challenge must match the one issued by the server.
- *   4. rpId hash must match the expected host.
- *   5. User presence (UP) must be asserted.
+ * Delegates all CBOR/X.509/COSE parsing and signature verification to
+ * @simplewebauthn/server's `verifyRegistrationResponse`. This module's job is
+ * limited to: (1) adapting KnoSky's raw-buffer inputs into the wire-format
+ * envelope the library expects, (2) configuring the library's trusted-root
+ * store per call from caller-supplied `trustedRoots`, (3) applying KnoSky's
+ * own tier-demotion rule for backup-eligible credentials, and (4) mapping the
+ * library's thrown errors into this module's `{ ok: false, reason }` contract
+ * so callers never need a try/catch of their own.
  *
- * This implementation handles the `packed` attestation format (the most common
- * for FIDO2 security keys).  Other formats (fido-u2f, tpm, android-key, none)
- * are rejected with a clear error rather than silently downgraded.
+ * Security properties enforced by the library (all real chain/field checks,
+ * not self-asserted flags):
+ *   1. Full x5c certificate-chain verification against the supplied
+ *      trustedRoots, including certificate OU/O/C field conformance,
+ *      basicConstraints, validity window, and AAGUID cross-check against the
+ *      leaf certificate's extension.
+ *   2. Backup-eligible credentials (independently confirmed via the verified
+ *      attestation's `credentialDeviceType === 'multiDevice'`, derived from
+ *      the authenticatorData BE bit — not a self-report) are demoted to
+ *      Tier-3-equivalent.
+ *   3. Challenge match (constant-time, via a custom comparator — see below).
+ *   4. rpID match.
+ *   5. Origin match (NEW vs. the pre-rework implementation, which never
+ *      checked origin at all — a real gap this rework closes).
+ *   6. User presence (UP) must be asserted.
  *
- * Input shapes (all are raw binary / Buffers, not base64):
+ * This implementation supports whichever attestation formats
+ * @simplewebauthn/server supports (packed, fido-u2f, android-safetynet,
+ * android-key, tpm, apple, none) rather than hand-rolling support for only
+ * "packed" as the pre-rework code did.
  *
- * @param {object}            opts
- * @param {Buffer}            opts.attestationObject   Raw CBOR attestation object
- * @param {Buffer}            opts.clientDataJSON       Raw client data JSON bytes
- * @param {Buffer}            opts.expectedChallenge    The 32-byte challenge this server issued
- * @param {string}            opts.expectedRpId         RP ID (usually hostname, e.g. "knosky.local")
- * @param {Buffer[]}          opts.trustedRoots         PEM/DER buffers of trusted root CA certs
- * @param {Buffer[]}          [opts.x5c]                Override x5c chain (for testing); normally
- *                                                       extracted from the attestation object.
+ * @param {object}   opts
+ * @param {Buffer}   opts.attestationObject   Raw CBOR attestation object
+ * @param {Buffer}   opts.clientDataJSON      Raw client data JSON bytes
+ * @param {Buffer|string} opts.expectedChallenge  The 32-byte challenge this server issued
+ * @param {string}   opts.expectedRpId        RP ID (usually hostname, e.g. "knosky.local")
+ * @param {string}   opts.expectedOrigin      Origin the ceremony must have occurred on
+ *                                            (REQUIRED — new vs. pre-rework, which never
+ *                                            validated origin)
+ * @param {Buffer[]} opts.trustedRoots        PEM or DER buffers of trusted root CA certs
  * @returns {Promise<{
  *   ok: boolean,
- *   tier: number,
+ *   tier: number|null,
  *   reason?: string,
- *   credId: Buffer,
- *   aaguid: Buffer,
+ *   credId: string,               // base64url credential id (was a raw Buffer pre-rework)
+ *   credentialPublicKey: Uint8Array, // COSE-encoded public key — needed for later assertion
+ *                                     // verification; the pre-rework code never returned this
+ *                                     // at all, which meant the assertion step had no way to
+ *                                     // retrieve the key it needed.
+ *   aaguid: string,               // formatted AAGUID string (was a raw 16-byte Buffer pre-rework)
  *   beFlag: boolean,
  *   signCount: number,
  * }>}
  */
 export async function verifyWebAuthnAttestation(opts) {
-  const { attestationObject, clientDataJSON, expectedChallenge, expectedRpId, trustedRoots } = opts;
+  const { attestationObject, clientDataJSON, expectedChallenge, expectedRpId, expectedOrigin, trustedRoots } = opts;
 
-  // ---- 1. Parse and validate clientDataJSON --------------------------------
-  let clientData;
+  if (!expectedOrigin || typeof expectedOrigin !== 'string') {
+    return { ok: false, reason: 'expectedOrigin is required (the origin the WebAuthn ceremony occurred on)', tier: null };
+  }
+
+  if (!Array.isArray(trustedRoots) || trustedRoots.length === 0) {
+    return { ok: false, reason: 'no trusted root CA certificates supplied', tier: null };
+  }
+
+  const attestationObjectBuf = Buffer.isBuffer(attestationObject) ? attestationObject : Buffer.from(attestationObject);
+  const crlRejectReason = _rejectIfCrlDistributionPoint(attestationObjectBuf);
+  if (crlRejectReason) {
+    return { ok: false, reason: crlRejectReason, tier: null };
+  }
+
+  // Root certs are a process-wide setting in @simplewebauthn/server, keyed by
+  // attestation format identifier. We set it for every format this module may
+  // encounter immediately before the (synchronously-awaited, non-interleaved)
+  // verify call below. This is not safe for concurrent verifyWebAuthnAttestation
+  // calls with DIFFERENT trustedRoots running in parallel (e.g. Promise.all) —
+  // KnoSky's real usage is a single local enrollment ceremony at a time, so
+  // this is an accepted constraint, not a hidden one.
+  const pemRoots = trustedRoots.map(r => (Buffer.isBuffer(r) ? r : Buffer.from(r)));
+  for (const fmt of ['packed', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm', 'apple']) {
+    SettingsService.setRootCertificates({ identifier: fmt, certificates: pemRoots });
+  }
+
+  const response = {
+    id: _PLACEHOLDER_CRED_ID,
+    rawId: _PLACEHOLDER_CRED_ID,
+    type: 'public-key',
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: _b64u(clientDataJSON),
+      attestationObject: _b64u(attestationObject),
+    },
+  };
+
+  let result;
   try {
-    clientData = JSON.parse(clientDataJSON.toString('utf8'));
-  } catch {
-    return { ok: false, reason: 'clientDataJSON is not valid JSON', tier: null };
-  }
-
-  if (clientData.type !== 'webauthn.create') {
-    return { ok: false, reason: `clientDataJSON.type must be "webauthn.create", got "${clientData.type}"`, tier: null };
-  }
-
-  // Verify challenge (base64url-encoded in clientDataJSON)
-  const receivedChallenge = Buffer.from(clientData.challenge ?? '', 'base64url');
-  const expChallenge = Buffer.isBuffer(expectedChallenge) ? expectedChallenge : Buffer.from(expectedChallenge);
-  if (receivedChallenge.length !== expChallenge.length || !timingSafeEqual(receivedChallenge, expChallenge)) {
-    return { ok: false, reason: 'challenge mismatch', tier: null };
-  }
-
-  // ---- 2. Parse attestation object (CBOR) ----------------------------------
-  let attObj;
-  try {
-    attObj = _decodeCborAttestationObject(attestationObject);
+    result = await verifyRegistrationResponse({
+      response,
+      expectedChallenge: _makeChallengeComparator(expectedChallenge),
+      expectedOrigin,
+      expectedRPID: expectedRpId,
+      expectedType: 'webauthn.create',
+      requireUserPresence: true,
+      requireUserVerification: false,
+    });
   } catch (err) {
-    return { ok: false, reason: `attestation object CBOR parse error: ${err.message}`, tier: null };
+    return { ok: false, reason: err.message, tier: null };
   }
 
-  const { fmt, attStmt, authData: authDataBuf } = attObj;
-
-  // ---- 3. Parse authenticatorData -----------------------------------------
-  let authData;
-  try {
-    authData = parseAuthenticatorData(authDataBuf);
-  } catch (err) {
-    return { ok: false, reason: `authenticatorData parse error: ${err.message}`, tier: null };
+  if (!result.verified) {
+    return { ok: false, reason: 'attestation verification failed', tier: null };
   }
 
-  // ---- 4. Verify rpId hash ------------------------------------------------
-  const expectedRpIdHash = createHash('sha256').update(expectedRpId).digest();
-  if (!timingSafeEqual(authData.rpIdHash, expectedRpIdHash)) {
-    return { ok: false, reason: 'rpId hash mismatch', tier: null };
-  }
-
-  // ---- 5. User presence must be asserted ----------------------------------
-  if (!authData.flagsDecoded.UP) {
-    return { ok: false, reason: 'user presence (UP) flag not set', tier: null };
-  }
-
-  // ---- 6. Attestation format must be "packed" (or pre-supplied) -----------
-  if (fmt !== 'packed') {
-    return { ok: false, reason: `attestation format "${fmt}" is not supported; expected "packed"`, tier: null };
-  }
-
-  // ---- 7. Full x5c chain verification against trusted roots ---------------
-  const x5c = opts.x5c ?? attStmt.x5c;
-  if (!Array.isArray(x5c) || x5c.length === 0) {
-    return { ok: false, reason: 'attestation statement missing x5c certificate chain', tier: null };
-  }
-
-  const chainResult = await _verifyX5cChain(x5c, trustedRoots ?? []);
-  if (!chainResult.ok) {
-    return { ok: false, reason: `x5c chain verification failed: ${chainResult.reason}`, tier: null };
-  }
-
-  // ---- 8. Verify packed attestation signature over (authData ‖ clientDataHash) --
-  const clientDataHash = createHash('sha256').update(clientDataJSON).digest();
-  const verifyData = Buffer.concat([authDataBuf, clientDataHash]);
-
-  const leafCertKey = chainResult.leafPublicKey;
-  let sigOk = false;
-  try {
-    sigOk = await subtle.verify(
-      { name: 'ECDSA', hash: 'SHA-256' },
-      leafCertKey,
-      attStmt.sig,
-      verifyData,
-    );
-  } catch (err) {
-    return { ok: false, reason: `signature verification error: ${err.message}`, tier: null };
-  }
-
-  if (!sigOk) {
-    return { ok: false, reason: 'packed attestation signature verification failed', tier: null };
-  }
-
-  // ---- 9. Backup-eligible flag: BE=1 demotes to Tier-3-equivalent ----------
-  const beFlag = authData.flagsDecoded.BE;
+  const info = result.registrationInfo;
+  // "Backup eligible" (BE, WebAuthn authenticatorData bit 3) means the
+  // credential CAN be synced/multi-device; the library surfaces this as
+  // credentialDeviceType === 'multiDevice'. This is distinct from BS
+  // ("backup state" — IS it currently backed up right now, surfaced as
+  // credentialBackedUp), which is not what the ticket's AC is about: a
+  // synced-CAPABLE credential is the downgrade risk regardless of whether
+  // it happens to be backed up at this exact moment.
+  const beFlag = info.credentialDeviceType === 'multiDevice';
   const tier = beFlag ? TIER.TOTP : TIER.WEBAUTHN;
   const tierLabel = beFlag
     ? 'software+TOTP (synced/backup-eligible WebAuthn credential demoted from Tier 2)'
@@ -413,33 +437,36 @@ export async function verifyWebAuthnAttestation(opts) {
     ok: true,
     tier,
     tierLabel,
-    credId: authData.credId,
-    aaguid: authData.aaguid,
+    credId: info.credential.id,
+    credentialPublicKey: info.credential.publicKey,
+    aaguid: info.aaguid,
     beFlag,
-    signCount: authData.signCount,
+    signCount: info.credential.counter,
   };
 }
 
 /**
  * Verify a WebAuthn assertion (authentication, not registration).
  *
- * Verifies that:
- *   1. The assertion signature is valid over (authData ‖ clientDataHash)
- *   2. The challenge matches (one-time use, callers must mark used before calling)
- *   3. rpId hash matches
- *   4. User presence is asserted
- *   5. The stored signCount has not rolled back (replay detection)
+ * Delegates to @simplewebauthn/server's `verifyAuthenticationResponse`, which
+ * verifies the assertion signature, challenge, rpID, origin, user presence,
+ * and signCount replay detection (throws if the reported counter did not
+ * advance past the stored value), then returns the raw assertion bytes hashed
+ * into the ledger entry (unforgeable logging AC).
  *
- * Returns the raw assertion bytes hashed into the ledger entry (unforgeable logging AC).
- *
- * @param {object}      opts
- * @param {Buffer}      opts.authData           authenticatorData from the assertion
- * @param {Buffer}      opts.signature          assertion signature
- * @param {Buffer}      opts.clientDataJSON     raw clientDataJSON bytes
- * @param {Buffer}      opts.expectedChallenge  the challenge the server issued
- * @param {string}      opts.expectedRpId       RP ID hostname
- * @param {CryptoKey}   opts.credentialPublicKey the registered credential's public key
- * @param {number}      opts.storedSignCount    previously stored signCount for this credential
+ * @param {object}    opts
+ * @param {Buffer}    opts.authData             authenticatorData from the assertion
+ * @param {Buffer}    opts.signature            assertion signature
+ * @param {Buffer}    opts.clientDataJSON       raw clientDataJSON bytes
+ * @param {Buffer|string} opts.expectedChallenge the challenge the server issued
+ * @param {string}    opts.expectedRpId         RP ID hostname
+ * @param {string}    opts.expectedOrigin       origin the ceremony must have occurred on (REQUIRED)
+ * @param {Uint8Array} opts.credentialPublicKey the registered credential's COSE public key
+ *                                              (from verifyWebAuthnAttestation's return value)
+ * @param {string}    [opts.credentialId]       base64url credential id, if the caller tracks
+ *                                              multiple credentials per principal (not
+ *                                              cross-validated by the library; informational)
+ * @param {number}    opts.storedSignCount      previously stored signCount for this credential
  * @returns {Promise<{
  *   ok: boolean,
  *   reason?: string,
@@ -448,87 +475,80 @@ export async function verifyWebAuthnAttestation(opts) {
  * }>}
  */
 export async function verifyWebAuthnAssertion(opts) {
-  const { authData, signature, clientDataJSON, expectedChallenge, expectedRpId,
-          credentialPublicKey, storedSignCount } = opts;
+  const {
+    authData, signature, clientDataJSON, expectedChallenge, expectedRpId, expectedOrigin,
+    credentialPublicKey, credentialId, storedSignCount,
+  } = opts;
 
-  // ---- 1. Parse clientDataJSON --------------------------------------------
-  let clientData;
+  if (!expectedOrigin || typeof expectedOrigin !== 'string') {
+    return { ok: false, reason: 'expectedOrigin is required (the origin the WebAuthn ceremony occurred on)' };
+  }
+
+  const idB64 = typeof credentialId === 'string' && credentialId ? credentialId : _PLACEHOLDER_CRED_ID;
+
+  const response = {
+    id: idB64,
+    rawId: idB64,
+    type: 'public-key',
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: _b64u(clientDataJSON),
+      authenticatorData: _b64u(authData),
+      signature: _b64u(signature),
+    },
+  };
+
+  const credential = {
+    id: idB64,
+    publicKey: credentialPublicKey instanceof Uint8Array ? credentialPublicKey : new Uint8Array(Buffer.from(credentialPublicKey)),
+    counter: storedSignCount,
+  };
+
+  let result;
   try {
-    clientData = JSON.parse(clientDataJSON.toString('utf8'));
-  } catch {
-    return { ok: false, reason: 'clientDataJSON is not valid JSON' };
-  }
-
-  if (clientData.type !== 'webauthn.get') {
-    return { ok: false, reason: `clientDataJSON.type must be "webauthn.get", got "${clientData.type}"` };
-  }
-
-  // ---- 2. Verify challenge ------------------------------------------------
-  const receivedChallenge = Buffer.from(clientData.challenge ?? '', 'base64url');
-  const expChallenge = Buffer.isBuffer(expectedChallenge) ? expectedChallenge : Buffer.from(expectedChallenge);
-  if (receivedChallenge.length !== expChallenge.length || !timingSafeEqual(receivedChallenge, expChallenge)) {
-    return { ok: false, reason: 'challenge mismatch' };
-  }
-
-  // ---- 3. Parse authenticatorData -----------------------------------------
-  let parsed;
-  try {
-    parsed = parseAuthenticatorData(authData);
+    result = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: _makeChallengeComparator(expectedChallenge),
+      expectedOrigin,
+      expectedRPID: expectedRpId,
+      expectedType: 'webauthn.get',
+      credential,
+      requireUserVerification: false,
+    });
   } catch (err) {
-    return { ok: false, reason: `authenticatorData parse error: ${err.message}` };
+    return { ok: false, reason: err.message };
   }
 
-  // ---- 4. rpId hash -------------------------------------------------------
-  const expectedRpIdHash = createHash('sha256').update(expectedRpId).digest();
-  if (!timingSafeEqual(parsed.rpIdHash, expectedRpIdHash)) {
-    return { ok: false, reason: 'rpId hash mismatch' };
-  }
-
-  // ---- 5. User presence ---------------------------------------------------
-  if (!parsed.flagsDecoded.UP) {
-    return { ok: false, reason: 'user presence (UP) flag not set' };
-  }
-
-  // ---- 6. Signature verification ------------------------------------------
-  const clientDataHash = createHash('sha256').update(clientDataJSON).digest();
-  const verifyData = Buffer.concat([authData, clientDataHash]);
-
-  let sigOk = false;
-  try {
-    sigOk = await subtle.verify(
-      { name: 'ECDSA', hash: 'SHA-256' },
-      credentialPublicKey,
-      signature,
-      verifyData,
-    );
-  } catch (err) {
-    return { ok: false, reason: `signature verification error: ${err.message}` };
-  }
-
-  if (!sigOk) {
+  if (!result.verified) {
     return { ok: false, reason: 'assertion signature verification failed' };
   }
 
-  // ---- 7. signCount replay detection (informational — up to caller to enforce) --
-  if (parsed.signCount !== 0 && parsed.signCount <= storedSignCount) {
-    return { ok: false, reason: `signCount replay: received ${parsed.signCount}, stored ${storedSignCount}` };
-  }
-
-  // ---- 8. Compute unforgeable assertion hash (AC: raw assertion hash in ledger) --
-  // SHA-256(authData ‖ signature ‖ clientDataJSON) — all raw bytes, none of
-  // them self-reported by the tool.  Callers MUST embed this in the ledger entry.
   const assertionHash = createHash('sha256')
-    .update(authData)
-    .update(signature)
-    .update(clientDataJSON)
+    .update(Buffer.isBuffer(authData) ? authData : Buffer.from(authData))
+    .update(Buffer.isBuffer(signature) ? signature : Buffer.from(signature))
+    .update(Buffer.isBuffer(clientDataJSON) ? clientDataJSON : Buffer.from(clientDataJSON))
     .digest('hex');
 
-  return { ok: true, newSignCount: parsed.signCount, assertionHash };
+  return { ok: true, newSignCount: result.authenticationInfo.newCounter, assertionHash };
 }
 
 // ---------------------------------------------------------------------------
-// TIER 3 — RFC 6238 TOTP (pure Node stdlib)
+// TIER 3 — RFC 6238 TOTP (otplib + @otplib/plugin-crypto-node)
 // ---------------------------------------------------------------------------
+
+const _totpCrypto = new NodeCryptoPlugin();
+const _totpBase32 = new ScureBase32Plugin();
+
+/** @internal Build a TOTP instance sharing KnoSky's fixed algorithm/digit/period policy. */
+function _makeTotp() {
+  return new TOTP({
+    crypto: _totpCrypto,
+    base32: _totpBase32,
+    algorithm: 'sha1', // RFC 6238 default; matches the pre-rework HMAC-SHA1 implementation
+    digits: 6,
+    period: 30,
+  });
+}
 
 /**
  * Generate a new TOTP secret (random 160-bit, Base32-encoded).
@@ -538,24 +558,31 @@ export async function verifyWebAuthnAssertion(opts) {
  */
 export function generateTotpSecret() {
   const secret = randomBytes(20); // 160 bits (recommended per RFC 4226)
-  return { secret, secretBase32: _base32Encode(secret) };
+  return { secret, secretBase32: _totpBase32.encode(secret) };
 }
 
 /**
  * Compute the RFC 6238 TOTP code for `secret` at unix time `ts` (seconds).
  * Uses a 30-second step, 6-digit output.
  *
+ * NOTE: this function is now async (it was synchronous pre-rework). otplib's
+ * TOTP class is async-first so the same code path works uniformly whether the
+ * configured crypto plugin is synchronous (ours is, via node:crypto) or not.
+ * No production call site in this repo currently calls this function
+ * synchronously — verified via a full-repo search before making this change.
+ *
  * @param {Buffer} secret   Raw HMAC-SHA1 key bytes.
  * @param {number} ts       Unix timestamp (seconds since epoch).  Defaults to now.
- * @returns {string}        6-digit zero-padded TOTP code.
+ * @returns {Promise<string>}   6-digit zero-padded TOTP code.
  */
-export function computeTotpCode(secret, ts = Math.floor(Date.now() / 1000)) {
-  const step = Math.floor(ts / 30);
-  return _hotp(secret, step);
+export async function computeTotpCode(secret, ts = Math.floor(Date.now() / 1000)) {
+  const totp = _makeTotp();
+  return totp.generate({ secret, epoch: ts });
 }
 
 /**
- * Verify a TOTP token against a secret, allowing ±1 step (±30 s drift window).
+ * Verify a TOTP token against a secret, allowing ±1 step (±30 s drift window,
+ * checked both into the past and the future — symmetric tolerance).
  *
  * Note: callers MUST apply rate-limiting before calling this.  See
  * {@link createTotpRateLimiter} for the required guard.
@@ -563,15 +590,13 @@ export function computeTotpCode(secret, ts = Math.floor(Date.now() / 1000)) {
  * @param {Buffer} secret   Raw HMAC-SHA1 key bytes.
  * @param {string} token    6-digit TOTP code to verify.
  * @param {number} ts       Unix timestamp (seconds).  Defaults to now.
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-export function verifyTotpToken(secret, token, ts = Math.floor(Date.now() / 1000)) {
+export async function verifyTotpToken(secret, token, ts = Math.floor(Date.now() / 1000)) {
   if (typeof token !== 'string' || !/^\d{6}$/.test(token)) return false;
-  const step = Math.floor(ts / 30);
-  for (const offset of [-1, 0, 1]) {
-    if (timingSafeStringEqual(token, _hotp(secret, step + offset))) return true;
-  }
-  return false;
+  const totp = _makeTotp();
+  const result = await totp.verify(token, { secret, epoch: ts, epochTolerance: 30 });
+  return result.valid;
 }
 
 /**
@@ -849,8 +874,15 @@ export function recordSignerTier(signerTiers, signerId, tier) {
 /**
  * Compute the quorum summary tier for a set of signers.
  *
- * The summary is the MINIMUM tier across all signers — never averaged, never
- * maxed (AC: weakest signer defines the quorum's tier).
+ * TIER.* numbers run strongest-to-weakest (1 = TPM, 2 = WebAuthn, 3 = TOTP),
+ * so the quorum's overall tier is the WEAKEST signer, i.e. the numerically
+ * HIGHEST tier value — `Math.max()` over the tier numbers. This is
+ * intentional: a quorum is only as strong as its weakest signer, and it must
+ * never be reported as stronger than that just because other signers used a
+ * better tier. (The pre-rework module's own comments here said "MINIMUM
+ * across all signers" while the code correctly did `Math.max()` — that
+ * comment was simply wrong relative to the numeric encoding and has been
+ * corrected in place; the behavior is unchanged.)
  *
  * @param {Array<{signerId: string, tier: number}>} signerTiers
  * @returns {{ summaryTier: number, label: string, signerCount: number }}
@@ -859,8 +891,9 @@ export function quorumSummaryTier(signerTiers) {
   if (!Array.isArray(signerTiers) || signerTiers.length === 0) {
     throw new TypeError('quorumSummaryTier: signerTiers must be a non-empty array');
   }
-  // Lower number = stronger tier (1 = TPM, 3 = TOTP).
-  // Min of tier numbers = weakest signer.  Higher number = weaker security.
+  // Weakest signer defines the quorum. Since lower TIER.* numbers are
+  // stronger, the weakest signer has the numerically highest tier value —
+  // Math.max() over the tier numbers is correct.
   const summaryTier = Math.max(...signerTiers.map(s => s.tier));
   return {
     summaryTier,
@@ -870,16 +903,19 @@ export function quorumSummaryTier(signerTiers) {
 }
 
 // ---------------------------------------------------------------------------
-// Downgrade-attack protection: tamper-evident metadata binding
+// Downgrade-attack protection: tier-checkpoint hash
 // ---------------------------------------------------------------------------
 
 /**
- * Build a tier-checkpoint object that can be fed into signManifest (F0.2) to
- * make the tier-detection result and minSigningTier setting tamper-evident.
+ * Build a tier-checkpoint object that can be fed into signManifest (F0.2) so
+ * the tier-detection result and minSigningTier setting cannot be silently
+ * rolled back (e.g. stripping the TPM detection or lowering the minimum tier
+ * claim) without invalidating the manifest signature.
  *
- * This object MUST be included in the signed manifest payload so that a
- * downgrade attack (e.g. stripping the TPM detection or lowering the minimum
- * tier claim) would invalidate the manifest signature.
+ * This object MUST be included in the signed manifest payload for that
+ * protection to apply. Wiring this into an actual signManifest/verifyManifest
+ * call site is tracked separately — this function ships the checkpoint
+ * primitive itself.
  *
  * @param {number}                      detectedTier        Tier from detectTier1Key()
  * @param {number}                      minSigningTier      Currently active minimum
@@ -959,6 +995,11 @@ export function verifyTierCheckpoint(checkpoint) {
  * computed by {@link verifyWebAuthnAssertion}.  It cannot be self-reported by
  * the tool — the hash must come from a verified assertion, not from a claim.
  *
+ * This function intentionally performs no authorization/quorum check of its
+ * own — that is out of scope here and belongs at the real ledger-write call
+ * site (not yet wired in this diff; tracked separately, same pattern as
+ * SAT-561 for the append-only checkpoint module).
+ *
  * @param {object}  opts
  * @param {string}  opts.signerId          Authoritative agent/signer id
  * @param {number}  opts.tier              TIER.* constant of this signer
@@ -990,297 +1031,4 @@ export function assembleLedgerEntry(opts) {
     reason: reason ?? '',
     tier_checkpoint: tierCheckpoint,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/**
- * RFC 4226 HOTP — HMAC-SHA1 one-time password.
- *
- * @param {Buffer} secret  Raw HMAC-SHA1 key bytes.
- * @param {number} counter 64-bit counter (must be a non-negative integer).
- * @returns {string}       6-digit zero-padded OTP.
- */
-function _hotp(secret, counter) {
-  const buf = Buffer.alloc(8);
-  // Write as big-endian 64-bit integer.  For counter values in TOTP step range
-  // (around 1.7e9) writeBigInt64BE is the safe approach.
-  buf.writeBigInt64BE(BigInt(counter));
-  const mac = createHmac('sha1', secret).update(buf).digest();
-  const offset = mac[19] & 0x0f;
-  const code = ((mac[offset] & 0x7f) << 24)
-             | ((mac[offset + 1] & 0xff) << 16)
-             | ((mac[offset + 2] & 0xff) << 8)
-             |  (mac[offset + 3] & 0xff);
-  return String(code % 1_000_000).padStart(6, '0');
-}
-
-/**
- * Timing-safe string comparison (equal-length strings of printable ASCII).
- * Returns true iff the two strings are identical.
- *
- * @param {string} a
- * @param {string} b
- * @returns {boolean}
- */
-function timingSafeStringEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  try {
-    return timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Minimal CBOR decoder — attestation object only
-// ---------------------------------------------------------------------------
-//
-// WebAuthn attestation objects are CBOR maps with the following keys:
-//   "fmt"      : text string
-//   "attStmt"  : CBOR map (format-specific)
-//   "authData" : byte string
-//
-// For "packed" attStmt:
-//   "alg"  : integer (COSE algorithm; -7 = ES256)
-//   "sig"  : byte string
-//   "x5c"  : array of byte strings (certificate chain)
-//
-// This decoder handles only the above subset — it is intentionally
-// narrow (fail-closed: any unsupported CBOR construct throws).  A full
-// general-purpose CBOR library is NOT needed for this attestation-only use.
-
-/** @internal */
-function _decodeCborAttestationObject(buf) {
-  buf = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
-  const [obj] = _cborDecode(buf, 0);
-  if (typeof obj !== 'object' || obj === null) {
-    throw new Error('attestation object is not a CBOR map');
-  }
-
-  // attStmt can be fmt-specific; extract x5c and sig for packed
-  const attStmt = obj.attStmt ?? {};
-  const x5c = attStmt.x5c
-    ? attStmt.x5c.map(b => Buffer.isBuffer(b) ? b : Buffer.from(b))
-    : null;
-  const sig = attStmt.sig
-    ? (Buffer.isBuffer(attStmt.sig) ? attStmt.sig : Buffer.from(attStmt.sig))
-    : null;
-
-  return {
-    fmt: obj.fmt,
-    attStmt: { ...attStmt, x5c, sig },
-    authData: Buffer.isBuffer(obj.authData) ? obj.authData : Buffer.from(obj.authData ?? []),
-  };
-}
-
-/**
- * @internal
- * Decode a single CBOR data item from `buf` at byte offset `pos`.
- * Returns `[value, newPos]`.  Throws on unsupported major types or short buffers.
- */
-function _cborDecode(buf, pos) {
-  if (pos >= buf.length) throw new Error('CBOR: unexpected end of input');
-  const initial = buf[pos++];
-  const major = (initial >> 5) & 0x07;
-  const info = initial & 0x1f;
-
-  let len;
-  if (info < 24) {
-    len = info;
-  } else if (info === 24) {
-    if (pos >= buf.length) throw new Error('CBOR: short buffer reading 1-byte length');
-    len = buf[pos++];
-  } else if (info === 25) {
-    if (pos + 1 >= buf.length) throw new Error('CBOR: short buffer reading 2-byte length');
-    len = buf.readUInt16BE(pos); pos += 2;
-  } else if (info === 26) {
-    if (pos + 3 >= buf.length) throw new Error('CBOR: short buffer reading 4-byte length');
-    len = buf.readUInt32BE(pos); pos += 4;
-  } else {
-    throw new Error(`CBOR: unsupported additional info ${info} (major ${major})`);
-  }
-
-  switch (major) {
-    case 0: // unsigned integer
-      return [len, pos];
-    case 1: // negative integer
-      return [-(len + 1), pos];
-    case 2: { // byte string
-      if (pos + len > buf.length) throw new Error('CBOR: byte string overruns buffer');
-      const bytes = buf.subarray(pos, pos + len);
-      return [bytes, pos + len];
-    }
-    case 3: { // text string
-      if (pos + len > buf.length) throw new Error('CBOR: text string overruns buffer');
-      const str = buf.subarray(pos, pos + len).toString('utf8');
-      return [str, pos + len];
-    }
-    case 4: { // array
-      const arr = [];
-      for (let i = 0; i < len; i++) {
-        const [val, nextPos] = _cborDecode(buf, pos);
-        arr.push(val);
-        pos = nextPos;
-      }
-      return [arr, pos];
-    }
-    case 5: { // map
-      const map = {};
-      for (let i = 0; i < len; i++) {
-        const [key, pos1] = _cborDecode(buf, pos);
-        const [val, pos2] = _cborDecode(buf, pos1);
-        map[key] = val;
-        pos = pos2;
-      }
-      return [map, pos];
-    }
-    default:
-      throw new Error(`CBOR: unsupported major type ${major}`);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// x5c certificate chain verification (WebAuthn attestation)
-// ---------------------------------------------------------------------------
-
-/**
- * @internal
- * Verify an x5c certificate chain against the supplied trusted root CA certificates.
- *
- * Chain validation rules (RFC 5280 simplified for FIDO use):
- *   1. Each certificate in the chain (except the root) must be signed by the
- *      next certificate in the chain.
- *   2. The chain must terminate at one of the `trustedRoots`.
- *   3. The leaf certificate must not be expired (checked against the current date).
- *
- * We use Node.js `X509Certificate` (available since Node 15.6) for parsing,
- * and SubtleCrypto for signature verification (consistent with the rest of this module).
- *
- * @param {Buffer[]}  x5c           DER-encoded certificate buffers, leaf first.
- * @param {Buffer[]}  trustedRoots  DER or PEM root CA certificate buffers.
- * @returns {Promise<{ ok: boolean, reason?: string, leafPublicKey?: CryptoKey }>}
- */
-async function _verifyX5cChain(x5c, trustedRoots) {
-  if (!x5c || x5c.length === 0) {
-    return { ok: false, reason: 'empty x5c chain' };
-  }
-
-  // Parse all certs in the chain
-  let certs;
-  try {
-    certs = x5c.map(der => new X509Certificate(der));
-  } catch (err) {
-    return { ok: false, reason: `x5c certificate parse error: ${err.message}` };
-  }
-
-  // Check leaf certificate validity period
-  const leaf = certs[0];
-  const now = new Date();
-  const validFrom = new Date(leaf.validFrom);
-  const validTo = new Date(leaf.validTo);
-  if (now < validFrom || now > validTo) {
-    return {
-      ok: false,
-      reason: `leaf certificate is not currently valid (validFrom=${leaf.validFrom}, validTo=${leaf.validTo})`,
-    };
-  }
-
-  // Parse trusted roots
-  let rootCerts;
-  try {
-    rootCerts = trustedRoots.map(r => new X509Certificate(r));
-  } catch (err) {
-    return { ok: false, reason: `trusted root CA parse error: ${err.message}` };
-  }
-
-  // Build the verification chain: verify each cert is signed by the next one.
-  // cert[0] (leaf) -> cert[1] (intermediate) -> ... -> cert[N-1] -> trustedRoot
-  for (let i = 0; i < certs.length - 1; i++) {
-    const subject = certs[i];
-    const issuer = certs[i + 1];
-    try {
-      const verifiedBy = subject.verify(issuer.publicKey);
-      if (!verifiedBy) {
-        return {
-          ok: false,
-          reason: `certificate chain broken at index ${i}: cert not signed by next certificate`,
-        };
-      }
-    } catch (err) {
-      return {
-        ok: false,
-        reason: `certificate chain verification error at index ${i}: ${err.message}`,
-      };
-    }
-  }
-
-  // Verify the chain tip (last cert in x5c) against a trusted root
-  const tip = certs[certs.length - 1];
-  let chainedToRoot = false;
-
-  for (const root of rootCerts) {
-    try {
-      if (tip.verify(root.publicKey)) {
-        chainedToRoot = true;
-        break;
-      }
-    } catch { /* try next root */ }
-  }
-
-  if (!chainedToRoot) {
-    // If there are no trusted roots at all (empty array), the chain cannot
-    // be verified against anything — reject.  This prevents a bypass attack
-    // where a caller passes an empty trustedRoots array.
-    if (rootCerts.length === 0) {
-      return { ok: false, reason: 'no trusted root CA certificates supplied — chain cannot be verified' };
-    }
-    return { ok: false, reason: 'x5c chain tip not signed by any trusted root CA' };
-  }
-
-  // Extract the leaf's public key as a CryptoKey for signature verification
-  let leafPublicKey;
-  try {
-    // X509Certificate.publicKey returns a CryptoKey (Node ≥ 15.6)
-    leafPublicKey = leaf.publicKey;
-  } catch (err) {
-    return { ok: false, reason: `could not extract leaf public key: ${err.message}` };
-  }
-
-  return { ok: true, leafPublicKey };
-}
-
-// ---------------------------------------------------------------------------
-// Base32 encoding (RFC 4648, alphabet A-Z 2-7)
-// Used for TOTP secret portability (compatible with authenticator apps).
-// ---------------------------------------------------------------------------
-
-const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-
-/**
- * @internal
- * Encode a Buffer as Base32 (RFC 4648, no padding).
- *
- * @param {Buffer} buf
- * @returns {string}
- */
-function _base32Encode(buf) {
-  let bits = 0;
-  let value = 0;
-  let out = '';
-  for (let i = 0; i < buf.length; i++) {
-    value = (value << 8) | buf[i];
-    bits += 8;
-    while (bits >= 5) {
-      out += BASE32_CHARS[(value >>> (bits - 5)) & 0x1f];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) {
-    out += BASE32_CHARS[(value << (5 - bits)) & 0x1f];
-  }
-  return out;
 }

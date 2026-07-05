@@ -22,11 +22,16 @@
     "CHANGELOG.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "@simplewebauthn/server": "^13.3.2",
+    "otplib": "^13.4.1",
+    "@otplib/plugin-crypto-node": "^13.4.1",
+    "@levischuck/tiny-cbor": "^0.2.2",
+    "@peculiar/x509": "^1.14.3"
   },
   "keywords": [
     "repo-map",
@@ -42,5 +47,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SathiaAI/knosky.git"
+  },
+  "devDependencies": {
+    "@peculiar/asn1-ecc": "^2.6.1",
+    "@peculiar/asn1-schema": "^2.6.0"
   }
 }

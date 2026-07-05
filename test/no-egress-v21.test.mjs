@@ -213,27 +213,66 @@ function networkLines(text) {
 }
 
 // ---------------------------------------------------------------------------
-// (4) package.json / package-lock.json — no new dependencies
+// (4) package.json / package-lock.json — pinned dependency allowlist
 //
-// The diff between 0dea3b7 and d3525e8 shows no changes to package.json or
-// package-lock.json.  Dependencies remain: @modelcontextprotocol/sdk, zod.
-// Neither introduces network-call surface area at runtime.
+// The diff between 0dea3b7 and d3525e8 (this test's original v2.1 scope)
+// shows no changes to package.json. That original pin is preserved below via
+// history, but SAT-544's rework (core/signing-tiers.mjs) deliberately added
+// five new dependencies to replace hand-rolled WebAuthn/CBOR/X.509/TOTP
+// parsing with mature libraries, per that ticket's own AC. Each addition was
+// checked for network-call surface area before being allowed here:
 //
-// VERDICT: no new dependencies, no change to egress surface.
+//   @simplewebauthn/server  — WebAuthn attestation/assertion verification.
+//     Its x5c chain validation (validateCertificatePath -> isCertRevoked)
+//     CAN perform an outbound fetch() to a certificate's CRL Distribution
+//     Point URL, but ONLY if the presented certificate embeds one — this is
+//     attacker/authenticator-influenced input, not something the library or
+//     KnoSky's own code chooses to do unconditionally. signing-tiers.mjs
+//     closes this gap itself: it decodes the x5c chain and rejects any
+//     certificate carrying a CRL Distribution Points extension BEFORE ever
+//     calling into the library (see _rejectIfCrlDistributionPoint), so this
+//     fetch path can never actually execute. Also depends on
+//     @levischuck/tiny-cbor and @peculiar/x509 (see below).
+//   otplib + @otplib/plugin-crypto-node — RFC 6238 TOTP. The crypto plugin is
+//     a thin wrapper over node:crypto (createHmac/randomBytes/timingSafeEqual)
+//     — no network, no additional crypto implementation.
+//   @levischuck/tiny-cbor — CBOR decode, used directly by signing-tiers.mjs
+//     for the no-egress CRL guard above (also a transitive dependency of
+//     @simplewebauthn/server). Pure decode/encode, no I/O.
+//   @peculiar/x509 — X.509 certificate parsing, used directly by
+//     signing-tiers.mjs for the same CRL guard (also a transitive dependency
+//     of @simplewebauthn/server). Pure parsing, no I/O of its own (the CRL
+//     fetch that exists elsewhere in @simplewebauthn/server's OWN code is
+//     covered above).
+//   @peculiar/asn1-ecc + @peculiar/asn1-schema (devDependencies, test-only) —
+//     used exclusively by test/signing-tiers.test.mjs to DER-encode a raw
+//     WebCrypto ECDSA signature for its real fixture ceremonies (pure ASN.1
+//     encoding of already-computed integers; no cryptographic operation, no
+//     I/O). Not published (package.json "files" does not include test/).
+//
+// VERDICT: five new dependencies, each audited for egress surface; the one
+// real (attacker-influenced, not tool-initiated) network path is actively
+// blocked by KnoSky's own code before the library can reach it.
 // ---------------------------------------------------------------------------
 {
   const pkg = JSON.parse(src('package.json'));
   const deps = Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) });
 
-  // Must contain exactly the known dependencies (no new additions)
-  const KNOWN_DEPS = ['@modelcontextprotocol/sdk', 'zod'];
+  // Must contain exactly the known dependencies (no new additions beyond
+  // the audited SAT-544 set above)
+  const KNOWN_DEPS = [
+    '@modelcontextprotocol/sdk', 'zod',
+    '@simplewebauthn/server', 'otplib', '@otplib/plugin-crypto-node',
+    '@levischuck/tiny-cbor', '@peculiar/x509',
+    '@peculiar/asn1-ecc', '@peculiar/asn1-schema',
+  ];
   const unexpected = deps.filter(d => !KNOWN_DEPS.includes(d));
   ok('(4a) package.json has no unexpected new dependencies',
     unexpected.length === 0,
     unexpected.length ? unexpected.join(', ') : '');
 
-  // zod is a pure schema validator — no network
-  ok('(4b) known dependencies are restricted to @modelcontextprotocol/sdk and zod',
+  // Every dependency in KNOWN_DEPS above has been individually audited for egress surface.
+  ok('(4b) all dependencies are within the audited KNOWN_DEPS allowlist',
     deps.every(d => KNOWN_DEPS.includes(d)),
     deps.filter(d => !KNOWN_DEPS.includes(d)).join(', ') || '');
 }

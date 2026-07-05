@@ -45,7 +45,7 @@ import {
   openSync, appendFileSync, closeSync,
   mkdirSync, existsSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { platform } from 'node:os';
 
@@ -68,6 +68,27 @@ const PLATFORM = platform();
  * @returns {{ ok: boolean, mechanism: string|null, skipped: boolean, error: string|null }}
  */
 export function setAppendOnlyAttribute(filePath) {
+  // PR #62 round-7 fix: enforce the documented contract (filePath must be an
+  // absolute path) before this reaches a privileged child process at all --
+  // rejects relative paths, empty strings, and non-string input up front.
+  if (typeof filePath !== 'string' || filePath.length === 0 || !isAbsolute(filePath)) {
+    return {
+      ok: false,
+      mechanism: null,
+      skipped: true,
+      error: 'invalid filePath: must be a non-empty absolute path',
+    };
+  }
+
+  // PR #62 round-7 fix: distinguish signal-based termination (process was
+  // killed) from a plain non-zero exit, so operators can tell them apart
+  // instead of a single generic error message.
+  const describeFailure = (r, cmdLabel) => {
+    if (r.error) return String(r.error.message || r.error);
+    if (r.signal !== null) return `${cmdLabel} was terminated by signal ${r.signal}`;
+    return `${cmdLabel} exited with status ${r.status}`;
+  };
+
   if (PLATFORM === 'linux') {
     // chattr +a — requires CAP_LINUX_IMMUTABLE; best-effort
     const r = spawnSync('chattr', ['+a', filePath], {
@@ -79,9 +100,7 @@ export function setAppendOnlyAttribute(filePath) {
         ok: false,
         mechanism: 'chattr+a',
         skipped: false,
-        error: r.error
-          ? String(r.error.message || r.error)
-          : `chattr exited with status ${r.status}`,
+        error: describeFailure(r, 'chattr'),
       };
     }
     return { ok: true, mechanism: 'chattr+a', skipped: false, error: null };
@@ -98,9 +117,7 @@ export function setAppendOnlyAttribute(filePath) {
         ok: false,
         mechanism: 'chflags-uappnd',
         skipped: false,
-        error: r.error
-          ? String(r.error.message || r.error)
-          : `chflags exited with status ${r.status}`,
+        error: describeFailure(r, 'chflags'),
       };
     }
     return { ok: true, mechanism: 'chflags-uappnd', skipped: false, error: null };
@@ -119,8 +136,9 @@ export function setAppendOnlyAttribute(filePath) {
  * OS append-only attribute immediately after creation.
  *
  * Call this once at process startup (before calling `appendCheckpointEntry`).
- * Safe to call on a file that already exists — attribute is re-applied on
- * every call (idempotent on most filesystems).
+ * Safe to call on a file that already exists — the OS attribute is only
+ * (re-)applied on first creation, since chattr+a/chflags-uappnd persist on
+ * the inode and do not need re-setting on every idempotent re-open.
  *
  * @param {string} checkpointPath  Path to the JSONL checkpoint file.
  * @returns {{ created: boolean, attributeResult: object }}
@@ -138,7 +156,15 @@ export function openCheckpoint(checkpointPath) {
     closeSync(fd);
   }
 
-  const attributeResult = setAppendOnlyAttribute(checkpointPath);
+  // PR #62 round-7 fix: only set the OS attribute on first creation. Both
+  // chattr +a and chflags uappnd are persistent flags on the inode -- they
+  // do not need re-applying on every idempotent re-open, and doing so spawned
+  // an unnecessary child process on every call (flagged as a resource-use
+  // concern for a function that may be called repeatedly during a process's
+  // lifetime).
+  const attributeResult = created
+    ? setAppendOnlyAttribute(checkpointPath)
+    : { ok: true, mechanism: null, skipped: true, error: null };
   return { created, attributeResult };
 }
 

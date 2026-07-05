@@ -27,13 +27,17 @@
 // additional guarantee that a privileged process using O_WRONLY without
 // O_APPEND (or `unlink`) is also blocked.
 //
-// SEPARATION OF CONCERNS (ticket round-3 clarification; PR #62 review hardened
-// this from a naming convention into a directory-level, structural boundary):
+// SEPARATION OF CONCERNS (ticket round-3 clarification; PR #62 review, round
+// 5: hardened from a directory-level convention into a PACKAGE-BOUNDARY
+// fact -- the export daemon is not just a different folder, it is a
+// completely separate package/repo this repo has zero dependency on):
 //   - This module is the ONLY checkpoint surface the evaluator touches.
-//   - Any export to a remote destination is handled by daemon/export-daemon.mjs
-//     -- a SEPARATE, unsandboxed, opt-in daemon that lives OUTSIDE core/, the
-//     evaluator-accessible directory.  The evaluator NEVER imports anything
-//     from daemon/ and gains no network capability in any configuration.
+//   - Any export to a remote destination is handled by the separate
+//     knosky-export-daemon package (github.com/SathiaAI/knosky-export-daemon)
+//     -- an unsandboxed, opt-in daemon an organization must deliberately
+//     install; this repo never imports, requires, or ships any part of it,
+//     and gains no network capability in any configuration regardless of
+//     whether that package is installed elsewhere.
 //
 // Pure Node stdlib, ESM — no third-party dependencies.
 

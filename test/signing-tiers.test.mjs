@@ -654,5 +654,47 @@ async function buildAssertionFixture({ rpId, origin, signCount, leafKeys }) {
     quorumSummaryTier(signers).summaryTier === TIER.TOTP);
 }
 
+// ---------------------------------------------------------------------------
+// F01-062 — @simplewebauthn/server's no-egress CRL guard (_rejectIfCrlDistributionPoint)
+// only exists in this module. If any other published module imported the
+// library directly, it would bypass that guard entirely. This is a
+// structural, repo-wide scan (same pattern as SAT-546's F02-020/021), not a
+// one-off assertion, so it stays correct as the codebase grows.
+// ---------------------------------------------------------------------------
+{
+  const fsMod = await import('node:fs');
+  const pathMod = await import('node:path');
+  const urlMod = await import('node:url');
+  const ROOT = pathMod.default.resolve(pathMod.default.dirname(urlMod.fileURLToPath(import.meta.url)), '..');
+
+  function collectJsFiles(dirPath) {
+    let results = [];
+    for (const entry of fsMod.default.readdirSync(dirPath, { withFileTypes: true })) {
+      const full = pathMod.default.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        results = results.concat(collectJsFiles(full));
+      } else if (entry.isFile() && (entry.name.endsWith('.mjs') || entry.name.endsWith('.js'))) {
+        results.push(full);
+      }
+    }
+    return results;
+  }
+
+  const publishedDirs = ['core', 'bin', 'mcp', 'action'];
+  const importers = [];
+  for (const dir of publishedDirs) {
+    const dirPath = pathMod.default.join(ROOT, dir);
+    if (!fsMod.default.existsSync(dirPath)) continue;
+    for (const f of collectJsFiles(dirPath)) {
+      const text = fsMod.default.readFileSync(f, 'utf8');
+      if (/@simplewebauthn\/server/.test(text) && pathMod.default.basename(f) !== 'signing-tiers.mjs') {
+        importers.push(pathMod.default.relative(ROOT, f));
+      }
+    }
+  }
+  ok('F01-062 only core/signing-tiers.mjs imports @simplewebauthn/server (no path can bypass the CRL guard)',
+    importers.length === 0, importers.join(', '));
+}
+
 console.log('\n' + (failures ? failures + ' FAILURE(S)' : 'all checks passed'));
 process.exit(failures ? 1 : 0);

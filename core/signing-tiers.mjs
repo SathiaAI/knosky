@@ -305,6 +305,28 @@ function _rejectIfCrlDistributionPoint(attestationObjectBytes) {
 }
 
 /**
+ * @internal
+ * @simplewebauthn/server's SettingsService.setRootCertificates is process-wide
+ * state, not per-call. Two concurrent verifyWebAuthnAttestation calls with
+ * DIFFERENT trustedRoots could otherwise race: call A sets its roots, call B
+ * overwrites them with its own before A's verifyRegistrationResponse actually
+ * reads them, and A ends up verifying against B's trust anchors. This
+ * serializes every call through this single async chain so the
+ * "set roots -> verify" critical section can never interleave, regardless of
+ * how many verifyWebAuthnAttestation calls are in flight at once. A failed
+ * ceremony does not wedge the chain for later callers.
+ * @type {Promise<void>}
+ */
+let _attestationLockChain = Promise.resolve();
+
+/** @internal Run `fn` after any in-flight attestation verification has finished. */
+function _withAttestationLock(fn) {
+  const run = _attestationLockChain.then(fn, fn);
+  _attestationLockChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+/**
  * Verify a WebAuthn attestation registration response.
  *
  * Delegates all CBOR/X.509/COSE parsing and signature verification to
@@ -377,17 +399,12 @@ export async function verifyWebAuthnAttestation(opts) {
     return { ok: false, reason: crlRejectReason, tier: null };
   }
 
-  // Root certs are a process-wide setting in @simplewebauthn/server, keyed by
-  // attestation format identifier. We set it for every format this module may
-  // encounter immediately before the (synchronously-awaited, non-interleaved)
-  // verify call below. This is not safe for concurrent verifyWebAuthnAttestation
-  // calls with DIFFERENT trustedRoots running in parallel (e.g. Promise.all) —
-  // KnoSky's real usage is a single local enrollment ceremony at a time, so
-  // this is an accepted constraint, not a hidden one.
+  // Root certs are a process-wide setting in @simplewebauthn/server, keyed
+  // by attestation format identifier — set immediately before the verify
+  // call, both serialized through _withAttestationLock so no other
+  // verifyWebAuthnAttestation call can interleave and overwrite these roots
+  // before this call's verifyRegistrationResponse has read them.
   const pemRoots = trustedRoots.map(r => (Buffer.isBuffer(r) ? r : Buffer.from(r)));
-  for (const fmt of ['packed', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm', 'apple']) {
-    SettingsService.setRootCertificates({ identifier: fmt, certificates: pemRoots });
-  }
 
   const response = {
     id: _PLACEHOLDER_CRED_ID,
@@ -402,14 +419,19 @@ export async function verifyWebAuthnAttestation(opts) {
 
   let result;
   try {
-    result = await verifyRegistrationResponse({
-      response,
-      expectedChallenge: _makeChallengeComparator(expectedChallenge),
-      expectedOrigin,
-      expectedRPID: expectedRpId,
-      expectedType: 'webauthn.create',
-      requireUserPresence: true,
-      requireUserVerification: false,
+    result = await _withAttestationLock(async () => {
+      for (const fmt of ['packed', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm', 'apple']) {
+        SettingsService.setRootCertificates({ identifier: fmt, certificates: pemRoots });
+      }
+      return verifyRegistrationResponse({
+        response,
+        expectedChallenge: _makeChallengeComparator(expectedChallenge),
+        expectedOrigin,
+        expectedRPID: expectedRpId,
+        expectedType: 'webauthn.create',
+        requireUserPresence: true,
+        requireUserVerification: false,
+      });
     });
   } catch (err) {
     return { ok: false, reason: err.message, tier: null };

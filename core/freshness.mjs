@@ -171,11 +171,15 @@ export function validateFreshness(artifact, lastSeq = null) {
  *   - seq EQUAL to HWM           → accepted (idempotent replay)
  *   - seq GREATER than HWM       → accepted and HWM advanced
  *
- * @param {object} artifact  City envelope or protocol artifact.
- * @param {string} hwmPath   Path to the independently-persisted HWM file.
+ * @param {object} artifact       City envelope or protocol artifact.
+ * @param {string} hwmPath        Path to the independently-persisted HWM file.
+ * @param {string} [checkpointPath]  Optional path to the append-only JSONL
+ *   checkpoint file (SAT-561 / F0.2b).  When supplied, every accepted write
+ *   is also appended to the secondary checkpoint (best-effort; failure never
+ *   blocks the primary HWM write).
  * @returns {{ ok: boolean, ledger_seq: number|null, errors: string[] }}
  */
-export function validateFreshnessWithHwm(artifact, hwmPath) {
+export function validateFreshnessWithHwm(artifact, hwmPath, checkpointPath) {
   const errors = [];
   const seq = extractLedgerSeq(artifact);
 
@@ -185,7 +189,7 @@ export function validateFreshnessWithHwm(artifact, hwmPath) {
     return { ok: false, ledger_seq: null, errors };
   }
 
-  const result = checkAndAdvance(seq, hwmPath);
+  const result = checkAndAdvance(seq, hwmPath, checkpointPath);
   if (!result.ok) {
     errors.push(result.error);
   }

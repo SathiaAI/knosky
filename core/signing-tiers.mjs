@@ -46,12 +46,10 @@
 //
 // Downgrade-attack protection:
 //   The tier-detection result together with the active minSigningTier setting are
-//   hashed into a checkpoint (buildTierCheckpoint/verifyTierCheckpoint) meant to
-//   be carried inside F0.2's signed manifest (signManifest / verifyManifest), so
-//   those values cannot be rolled back without invalidating the manifest
-//   signature. NOTE: wiring this checkpoint into an actual signManifest/
-//   verifyManifest call is tracked separately (see SAT-544 follow-up) — this
-//   module ships the checkpoint primitive itself.
+//   hashed into a checkpoint (buildTierCheckpoint/verifyTierCheckpoint) and signed
+//   via signManifest/verifyManifest (key-store.mjs) so those values cannot be
+//   rolled back without invalidating the manifest signature.  The wiring is in
+//   signTierCheckpoint / verifySignedTierCheckpoint (SAT-562, this module).
 //
 // Design references: D-193, D-194, OUTPUTS/2026-07-05-KnoSky-F0-F1-DesignGate-v3-Combined.md §F0.1
 // Authority: SAT-544.
@@ -69,6 +67,8 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+
+import { signManifest, verifyManifest } from './key-store.mjs';
 
 import {
   verifyRegistrationResponse,
@@ -935,9 +935,9 @@ export function quorumSummaryTier(signerTiers) {
  * claim) without invalidating the manifest signature.
  *
  * This object MUST be included in the signed manifest payload for that
- * protection to apply. Wiring this into an actual signManifest/verifyManifest
- * call site is tracked separately — this function ships the checkpoint
- * primitive itself.
+ * protection to apply. Use {@link signTierCheckpoint} to produce a manifest
+ * signed by the key store, and {@link verifySignedTierCheckpoint} to verify
+ * it before trusting the claimed tier.
  *
  * @param {number}                      detectedTier        Tier from detectTier1Key()
  * @param {number}                      minSigningTier      Currently active minimum
@@ -1004,6 +1004,58 @@ export function verifyTierCheckpoint(checkpoint) {
   try { match = timingSafeEqual(eBuf, aBuf); } catch { match = false; }
 
   return match ? { ok: true } : { ok: false, reason: 'checkpoint hash mismatch — possible downgrade attack' };
+}
+
+/**
+ * Sign a tier-checkpoint by wrapping it in a manifest and calling
+ * {@link signManifest} from the key store.
+ *
+ * Returns a signed manifest object (all checkpoint fields + `key_id` + `sig`)
+ * that can be persisted or transmitted.  Consumers MUST call
+ * {@link verifySignedTierCheckpoint} before trusting the claimed tier.
+ *
+ * Throws if there is no active key in the store (same contract as
+ * {@link signManifest}).
+ *
+ * @param {{ keys: Map<string,object>, activeKeyId: string|null }} ks  Key store
+ * @param {number} detectedTier      Tier from {@link detectTier1Key}
+ * @param {number} minSigningTier    Currently active minimum tier
+ * @param {string} districtClass     District class in scope
+ * @returns {object}  Signed manifest: tier-checkpoint fields + `key_id` + `sig`
+ */
+export function signTierCheckpoint(ks, detectedTier, minSigningTier, districtClass) {
+  const checkpoint = buildTierCheckpoint(detectedTier, minSigningTier, districtClass);
+  return signManifest(ks, checkpoint);
+}
+
+/**
+ * Verify a signed tier-checkpoint produced by {@link signTierCheckpoint}.
+ *
+ * Performs two independent checks in order:
+ *   1. {@link verifyManifest} — confirms the HMAC-SHA256 signature is valid and
+ *      the signing key is present and not revoked in the store.
+ *   2. {@link verifyTierCheckpoint} — confirms the embedded SHA-256 checkpoint
+ *      hash is internally consistent (downgrade-attack guard).
+ *
+ * Returns `{ ok: true }` only when both checks pass.
+ * Returns `{ ok: false, reason }` for any failure, with the `reason` from
+ * whichever check failed first.
+ *
+ * Never throws on malformed input (inherits that contract from
+ * {@link verifyManifest}).
+ *
+ * @param {{ keys: Map<string,object>, activeKeyId: string|null }} ks
+ * @param {object} signedCheckpoint  Value returned by {@link signTierCheckpoint}
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+export function verifySignedTierCheckpoint(ks, signedCheckpoint) {
+  const manifestResult = verifyManifest(ks, signedCheckpoint);
+  if (!manifestResult.ok) return manifestResult;
+
+  const checkpointResult = verifyTierCheckpoint(signedCheckpoint);
+  if (!checkpointResult.ok) return checkpointResult;
+
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

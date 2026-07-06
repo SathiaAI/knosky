@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, openSync, fsyncSync, closeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { MAX_PLAUSIBLE_LEDGER_SEQ } from './constants.mjs';
+import { openCheckpoint, appendCheckpointEntry } from './append-only-checkpoint.mjs';
 
 // ---------------------------------------------------------------------------
 // HWM file I/O
@@ -104,15 +105,22 @@ export function writeHwm(hwmPath, seq) {
  * state as invalid and stop processing — it must not be applied or surfaced
  * as authoritative.
  *
- * @param {number} seq      Claimed sequence number from the incoming ledger state.
- * @param {string} hwmPath  Path to the independently-persisted HWM file.
+ * When `checkpointPath` is supplied, every accepted write is also appended to
+ * the append-only secondary checkpoint file (SAT-561 / F0.2b).  The checkpoint
+ * write is best-effort: any error is swallowed so that a checkpoint failure
+ * never blocks the primary HWM write.  `openCheckpoint` is called once per
+ * path on first use (idempotent; no-op on subsequent calls).
+ *
+ * @param {number} seq                   Claimed sequence number from the incoming ledger state.
+ * @param {string} hwmPath               Path to the independently-persisted HWM file.
+ * @param {string} [checkpointPath]      Optional path to the append-only JSONL checkpoint file.
  * @returns {{ ok: boolean, seq: number, hwm: number, error?: string }}
  */
 // Second layer of defense: enforced here too (not only in
 // core/freshness.mjs's extractLedgerSeq) so checkAndAdvance is safe even if
 // called directly. Imports the single source of truth from constants.mjs
 // (a dependency-free module) so the two layers cannot silently diverge.
-export function checkAndAdvance(seq, hwmPath) {
+export function checkAndAdvance(seq, hwmPath, checkpointPath) {
   if (!Number.isInteger(seq) || seq < 0 || seq > MAX_PLAUSIBLE_LEDGER_SEQ) {
     return {
       ok: false,
@@ -137,5 +145,20 @@ export function checkAndAdvance(seq, hwmPath) {
 
   // seq >= hwm: advance (or re-confirm) the mark.
   writeHwm(hwmPath, seq);
+
+  // SAT-561 (F0.2b): secondary append-only checkpoint write — best-effort,
+  // never blocks or fails the primary HWM write.
+  if (checkpointPath !== undefined && checkpointPath !== null) {
+    try {
+      openCheckpoint(checkpointPath);
+      appendCheckpointEntry(checkpointPath, {
+        seq,
+        event: 'ledger_state',
+        ts: new Date().toISOString(),
+        hwm_previously: hwm,
+      });
+    } catch { /* best-effort — checkpoint failure must not affect the primary write */ }
+  }
+
   return { ok: true, seq, hwm };
 }

@@ -301,6 +301,78 @@ console.log('\n--- F02-021  package.json has zero coupling to knosky-export-daem
     !Object.keys(allDeps).some((d) => d === 'knosky-export-daemon'));
 }
 
+// ===========================================================================
+// F02-022  Integration: a real ledger write (checkAndAdvance) also produces
+//          a checkpoint line in the JSONL file (SAT-561 / F0.2b).
+//
+// This test wires checkpointPath through checkAndAdvance and verifies:
+//   (a) the primary HWM write is unaffected (checkAndAdvance still returns ok).
+//   (b) a checkpoint line is created in the JSONL file.
+//   (c) the checkpoint line carries seq + event='ledger_state'.
+//   (d) multiple ledger writes produce multiple checkpoint lines (append, not
+//       overwrite).
+//   (e) a refused write (seq < HWM) produces NO checkpoint line — the
+//       checkpoint must not record events the primary guard rejected.
+//   (f) omitting checkpointPath (legacy callers) still works — no crash.
+// ===========================================================================
+console.log('\n--- F02-022  Integration: real ledger write produces checkpoint line ---');
+
+import { checkAndAdvance } from '../core/ledger.mjs';
+
+{
+  const hwmFile = testPath('f02-022.hwm.json');
+  const cpFile = testPath('f02-022.jsonl');
+
+  // (a) primary write is unaffected
+  const r1 = checkAndAdvance(1, hwmFile, cpFile);
+  ok('F02-022-a: checkAndAdvance ok=true with checkpointPath', r1.ok === true, JSON.stringify(r1));
+
+  // (b) checkpoint file exists after first write
+  ok('F02-022-b: checkpoint file created after first ledger write', existsSync(cpFile));
+
+  // (c) checkpoint line carries expected fields
+  {
+    const lines = readFileSync(cpFile, 'utf8').trim().split('\n').filter(l => l.trim());
+    ok('F02-022-c: exactly one checkpoint line after first write', lines.length === 1, String(lines.length));
+    let parsed;
+    let parseOk = false;
+    try { parsed = JSON.parse(lines[0]); parseOk = true; } catch { /* fail below */ }
+    ok('F02-022-c: checkpoint line is valid JSON', parseOk);
+    ok('F02-022-c: checkpoint line has seq=1', parsed?.seq === 1, JSON.stringify(parsed));
+    ok('F02-022-c: checkpoint line has event=ledger_state', parsed?.event === 'ledger_state', JSON.stringify(parsed));
+    ok('F02-022-c: checkpoint line has ts (ISO string)', typeof parsed?.ts === 'string' && parsed.ts.length > 0);
+  }
+
+  // (d) multiple ledger writes → multiple checkpoint lines (append, not overwrite)
+  const r2 = checkAndAdvance(2, hwmFile, cpFile);
+  const r3 = checkAndAdvance(3, hwmFile, cpFile);
+  ok('F02-022-d: second write ok=true', r2.ok === true);
+  ok('F02-022-d: third write ok=true', r3.ok === true);
+  {
+    const allLines = readFileSync(cpFile, 'utf8').trim().split('\n').filter(l => l.trim());
+    ok('F02-022-d: three writes produce three checkpoint lines', allLines.length === 3, String(allLines.length));
+    const seqs = allLines.map(l => JSON.parse(l).seq);
+    ok('F02-022-d: checkpoint lines are seq 1, 2, 3 in order',
+      seqs[0] === 1 && seqs[1] === 2 && seqs[2] === 3, JSON.stringify(seqs));
+  }
+
+  // (e) a refused write (seq < HWM) produces NO new checkpoint line
+  const linesBefore = readFileSync(cpFile, 'utf8').trim().split('\n').filter(l => l.trim()).length;
+  const rRefused = checkAndAdvance(1, hwmFile, cpFile); // seq=1 < HWM=3 → refused
+  ok('F02-022-e: refused write returns ok=false', rRefused.ok === false, JSON.stringify(rRefused));
+  const linesAfter = readFileSync(cpFile, 'utf8').trim().split('\n').filter(l => l.trim()).length;
+  ok('F02-022-e: refused write does NOT add a checkpoint line',
+    linesAfter === linesBefore, `before=${linesBefore} after=${linesAfter}`);
+
+  // (f) omitting checkpointPath (legacy call signature) does not throw
+  const hwmFile2 = testPath('f02-022b.hwm.json');
+  let threw = false;
+  let rLegacy;
+  try { rLegacy = checkAndAdvance(5, hwmFile2); } catch { threw = true; }
+  ok('F02-022-f: checkAndAdvance without checkpointPath does not throw', !threw);
+  ok('F02-022-f: legacy call returns ok=true', rLegacy && rLegacy.ok === true, JSON.stringify(rLegacy));
+}
+
 // ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------

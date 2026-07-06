@@ -19,9 +19,9 @@
 // The module NEVER attempts to *remove* the attribute — that would require
 // the same elevated rights and would defeat the purpose.
 //
-// The evaluator is intended to call `appendCheckpointEntry(path, entry)`
-// on every ledger write (wiring is a separate, subsequent PR -- this PR
-// ships the checkpoint module itself). It uses
+// The evaluator calls `appendCheckpointEntry(path, entry)` on every ledger
+// write via the optional `checkpointPath` parameter added to `checkAndAdvance`
+// (core/ledger.mjs) in SAT-561.  It uses
 // `O_WRONLY | O_APPEND | O_CREAT` (no truncation flag) so every open is an
 // append even without the OS attribute.  The OS attribute provides the
 // additional guarantee that a privileged process using O_WRONLY without

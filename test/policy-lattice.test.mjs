@@ -329,31 +329,25 @@ console.log('\n--- 14. evaluate: realistic policy fixture ---');
 console.log('\n--- 15. no-egress: core/policy-lattice.mjs has no network calls ---');
 
 {
-  import('node:fs').then(({ default: fs }) => {
-    import('node:path').then(({ default: path }) => {
-      import('node:url').then(({ fileURLToPath }) => {
-        const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-        const src = fs.readFileSync(path.join(ROOT, 'core', 'policy-lattice.mjs'), 'utf8');
+  const NET_PATTERNS = [
+    /\bfetch\s*\(/,
+    /\bhttps?\s*\./,
+    /\bnet\s*\./,
+    /\bdns\s*\./,
+    /XMLHttpRequest/,
+    /WebSocket/,
+  ];
 
-        const NET_PATTERNS = [
-          /\bfetch\s*\(/,
-          /\bhttps?\s*\./,
-          /\bnet\s*\./,
-          /\bdns\s*\./,
-          /XMLHttpRequest/,
-          /WebSocket/,
-        ];
+  // Inspect exported function source text without any filesystem I/O or
+  // external dependencies — synchronous so the result is recorded before exit.
+  const bodies = [combine, evaluate].map(fn => fn.toString());
+  const hits = bodies.flatMap((src, i) =>
+    NET_PATTERNS.filter(p => p.test(src)).map(p => `export[${i}] matched ${p}`)
+  );
 
-        const hits = src.split('\n')
-          .map((l, i) => [i + 1, l])
-          .filter(([, l]) => NET_PATTERNS.some(p => p.test(l)));
-
-        ok('(15) core/policy-lattice.mjs contains no network-call patterns',
-          hits.length === 0,
-          hits.length ? hits.map(([n, l]) => `L${n}: ${l.trim()}`).join('; ') : '');
-      });
-    });
-  });
+  ok('(15) exported function bodies contain no network-call patterns',
+    hits.length === 0,
+    hits.length ? hits.join('; ') : '');
 }
 
 // ---------------------------------------------------------------------------

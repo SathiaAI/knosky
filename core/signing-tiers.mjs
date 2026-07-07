@@ -200,7 +200,7 @@ export async function detectTier1Key() {
  *
  * Platforms and signals (SAT-544 + SAT-564):
  *   linux  — kernel device node (/dev/tpmrm0 | /dev/tpm0), no spawn.
- *   darwin — arm64: architecture constant (no spawn); x64: ioreg(8) spawn.
+ *   darwin — ioreg(8) spawn for all architectures (see _probeDarwin).
  *   win32  — PowerShell Get-Tpm spawn.
  *
  * @param {{ arch?: string, _spawnFn?: Function }} [_opts]  Injection seam used
@@ -238,16 +238,17 @@ async function _probeTpmPresence({ arch, _spawnFn } = {}) {
  * @internal
  * macOS Secure Enclave probe (SAT-564 explicit spawn-constraint relaxation).
  *
- * arm64 path (spawn-free): every Apple Silicon SoC (A-series / M-series) ships
- * a Secure Enclave as a hardware constant. The architecture flag is determined by
- * the kernel itself (os.arch()), not by user-facing software, so it is not
- * spoofable by ordinary user-space processes.
+ * All macOS paths use the IOKit ioreg(8) probe regardless of reported process
+ * architecture.  os.arch() returns the running process ABI, not the underlying
+ * silicon: under Rosetta 2 an Intel Mac process reports 'arm64', making an
+ * arch-based shortcut an unreliable signal for hardware presence.  The ioreg
+ * probe is the only verifiable, hardware-level mechanism available without root.
  *
- * x64 path (spawns ioreg): Intel Macs with Touch ID / T2 chip have a Secure
- * Enclave bridge accessible via IOKit. `ioreg -c AppleKeyStoreController` lists
- * the IOKit registry for that class; presence of a "+-o AppleKeyStoreController"
- * entry is the definitive confirmation. A non-zero exit, a missing ioreg binary,
- * or a 2-second timeout is treated as absent rather than throwing.
+ * `ioreg -c AppleKeyStoreController` lists the IOKit registry for that class;
+ * presence of an "AppleKeyStoreController" entry is the definitive confirmation
+ * of a T2 chip or Apple Silicon Secure Enclave bridge.  A non-zero exit, a
+ * missing ioreg binary, or a 2-second timeout is treated as absent rather than
+ * throwing.
  *
  * Spawn constraints: spawning `ioreg` is the relaxation explicitly reviewed in
  * SAT-564. The binary lives at a fixed OS path (/usr/sbin/ioreg), is shipped
@@ -255,24 +256,16 @@ async function _probeTpmPresence({ arch, _spawnFn } = {}) {
  * is given a 2-second wall-clock timeout. stdout is checked only for a known
  * safe string pattern.
  *
- * @param {string}   arch       CPU architecture string (os.arch() equivalent)
+ * @param {string}   _arch      Ignored — retained for call-site compatibility.
  * @param {Function} spawnFn    spawnSync-compatible function
  * @returns {{ tpmPresent: boolean, mechanism: string|null, detail: string }}
  */
-export function _probeDarwin(arch, spawnFn) {
+export function _probeDarwin(_arch, spawnFn) {
   // -------------------------------------------------------------------
-  // 1. Apple Silicon (arm64) — architecture is the hardware guarantee.
-  // -------------------------------------------------------------------
-  if (arch === 'arm64') {
-    return {
-      tpmPresent: true,
-      mechanism: 'darwin arm64 (Apple Silicon Secure Enclave — hardware constant)',
-      detail: 'Apple Silicon SoC includes a Secure Enclave on all shipping hardware; confirmed via os.arch() === "arm64"',
-    };
-  }
-
-  // -------------------------------------------------------------------
-  // 2. Intel Mac (x64) — IOKit ioreg(8) probe (SAT-564 spawn relaxation).
+  // IOKit ioreg(8) probe — used for all macOS architectures (SAT-564).
+  // os.arch() reflects the process ABI, not the underlying silicon, so
+  // it cannot reliably distinguish Apple Silicon from an Intel Mac running
+  // a process under Rosetta 2.  The ioreg probe is the verifiable signal.
   // -------------------------------------------------------------------
   let result;
   try {

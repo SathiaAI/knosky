@@ -91,7 +91,7 @@
 //            "downgrade" framing duplicate of F01-028.
 //
 // SAT-564 — Tier 1 detection on macOS / Windows (real hardware-presence signals):
-//   F01-063  _probeDarwin arm64 → tpmPresent=true (Apple Silicon constant, no spawn).
+//   F01-063  _probeDarwin arm64 process + ioreg finds entry → tpmPresent=true (always uses ioreg).
 //   F01-064  _probeDarwin x64, ioreg returns AppleKeyStoreController → tpmPresent=true.
 //   F01-065  _probeDarwin x64, ioreg exit code non-zero → tpmPresent=false.
 //   F01-066  _probeDarwin x64, ioreg output lacks AppleKeyStoreController → tpmPresent=false.
@@ -684,12 +684,16 @@ function fakeSpawn({ stdout = '', status = 0, throwErr = null } = {}) {
   };
 }
 
-// F01-063: arm64 → Secure Enclave present (no spawn needed — spawnFn is never
-// called; we pass a throwing stub to prove it).
+// F01-063: arm64 process with ioreg finding AppleKeyStoreController → present.
+// os.arch() returns the process ABI, not the silicon; under Rosetta 2 an Intel
+// Mac can report 'arm64'.  The probe must use ioreg for all architectures so
+// that true hardware presence is verified rather than assumed from the arch label.
 {
-  const neverCalled = () => { throw new Error('spawnFn should not be called on arm64'); };
-  const r = _probeDarwin('arm64', neverCalled);
-  ok('F01-063 darwin arm64 reports tpmPresent=true (Apple Silicon constant, no spawn)',
+  const r = _probeDarwin('arm64', fakeSpawn({
+    stdout: '+-o AppleKeyStoreController  <class AppleKeyStoreController, id 0x1000002b7, registered, matched, active, busy 0 (0 ms), retain 9>\n',
+    status: 0,
+  }));
+  ok('F01-063 darwin arm64 process uses ioreg probe; AppleKeyStoreController present → tpmPresent=true',
     r.tpmPresent === true && r.mechanism !== null, JSON.stringify(r));
 }
 

@@ -57,7 +57,7 @@ function isKnown(d) {
  * - Non-array, null, undefined → NOT_APPLICABLE.
  * - Unrecognised (unknown) values are skipped — they are neutral.
  *
- * @param {string[]} decisions
+ * @param {unknown[]} decisions
  * @returns {'DENY'|'ALLOW'|'NOT_APPLICABLE'}
  */
 export function combine(decisions) {

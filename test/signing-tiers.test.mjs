@@ -90,6 +90,18 @@
 //   F01-061  Quorum minimum: mix of Tier1+Tier3 → summary is Tier3 (not average) — explicit
 //            "downgrade" framing duplicate of F01-028.
 //
+// SAT-564 — Tier 1 detection on macOS / Windows (real hardware-presence signals):
+//   F01-063  _probeDarwin arm64 → tpmPresent=true (Apple Silicon constant, no spawn).
+//   F01-064  _probeDarwin x64, ioreg returns AppleKeyStoreController → tpmPresent=true.
+//   F01-065  _probeDarwin x64, ioreg exit code non-zero → tpmPresent=false.
+//   F01-066  _probeDarwin x64, ioreg output lacks AppleKeyStoreController → tpmPresent=false.
+//   F01-067  _probeDarwin x64, spawnFn throws (ENOENT / binary missing) → tpmPresent=false.
+//   F01-068  _probeDarwin non-arm64/x64 arch, ioreg present → tpmPresent based on output.
+//   F01-069  _probeWindows, Get-Tpm returns "True" → tpmPresent=true.
+//   F01-070  _probeWindows, Get-Tpm returns "False" → tpmPresent=false.
+//   F01-071  _probeWindows, powershell exits non-zero → tpmPresent=false.
+//   F01-072  _probeWindows, spawnFn throws (ENOENT / binary missing) → tpmPresent=false.
+//
 // Run: node test/signing-tiers.test.mjs
 
 import crypto, { webcrypto, randomBytes } from 'node:crypto';
@@ -118,6 +130,8 @@ import {
   buildTierCheckpoint,
   verifyTierCheckpoint,
   assembleLedgerEntry,
+  _probeDarwin,
+  _probeWindows,
 } from '../core/signing-tiers.mjs';
 
 x509.cryptoProvider.set(webcrypto);
@@ -652,6 +666,103 @@ async function buildAssertionFixture({ rpId, origin, signCount, leafKeys }) {
   signers = recordSignerTier(signers, 'weak', TIER.TOTP);
   ok('F01-061 quorum with mixed Tier1+Tier3 summarizes as Tier3 (never averaged)',
     quorumSummaryTier(signers).summaryTier === TIER.TOTP);
+}
+
+// ---------------------------------------------------------------------------
+// F01-063..072 — SAT-564 macOS / Windows Tier 1 detection (via injection seam)
+// All tests run unconditionally on every platform (Linux CI included) because
+// _probeDarwin and _probeWindows accept a spawnFn injection parameter that
+// replaces the real spawnSync with a controllable stand-in.
+// ---------------------------------------------------------------------------
+
+// Helper: make a fake spawnSync that returns a canonical-looking spawnSync
+// result object without actually running a child process.
+function fakeSpawn({ stdout = '', status = 0, throwErr = null } = {}) {
+  return (_cmd, _args, _opts) => {
+    if (throwErr) throw throwErr;
+    return { status, stdout, stderr: '', pid: 99999, signal: null, error: null };
+  };
+}
+
+// F01-063: arm64 → Secure Enclave present (no spawn needed — spawnFn is never
+// called; we pass a throwing stub to prove it).
+{
+  const neverCalled = () => { throw new Error('spawnFn should not be called on arm64'); };
+  const r = _probeDarwin('arm64', neverCalled);
+  ok('F01-063 darwin arm64 reports tpmPresent=true (Apple Silicon constant, no spawn)',
+    r.tpmPresent === true && r.mechanism !== null, JSON.stringify(r));
+}
+
+// F01-064: x64 + ioreg finds AppleKeyStoreController → present.
+{
+  const r = _probeDarwin('x64', fakeSpawn({
+    stdout: '+-o AppleKeyStoreController  <class AppleKeyStoreController, id 0x1000002b7, registered, matched, active, busy 0 (0 ms), retain 9>\n',
+    status: 0,
+  }));
+  ok('F01-064 darwin x64 ioreg positive → tpmPresent=true',
+    r.tpmPresent === true && r.mechanism !== null, JSON.stringify(r));
+}
+
+// F01-065: x64 + ioreg exits non-zero → absent.
+{
+  const r = _probeDarwin('x64', fakeSpawn({ stdout: '', status: 1 }));
+  ok('F01-065 darwin x64 ioreg non-zero exit → tpmPresent=false',
+    r.tpmPresent === false, JSON.stringify(r));
+}
+
+// F01-066: x64 + ioreg exits 0 but output has no AppleKeyStoreController entry.
+{
+  const r = _probeDarwin('x64', fakeSpawn({ stdout: 'some other ioreg output\n', status: 0 }));
+  ok('F01-066 darwin x64 ioreg output has no class entry → tpmPresent=false',
+    r.tpmPresent === false, JSON.stringify(r));
+}
+
+// F01-067: x64 + spawnFn throws (binary missing / ENOENT) → absent, no throw.
+{
+  const r = _probeDarwin('x64', fakeSpawn({ throwErr: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }) }));
+  ok('F01-067 darwin x64 spawn throws → tpmPresent=false (no rethrow)',
+    r.tpmPresent === false, JSON.stringify(r));
+}
+
+// F01-068: non-arm64 / non-x64 arch (e.g. future universal binary running as
+// arm64e) — ioreg presence depends only on output content, not arch label.
+{
+  const r = _probeDarwin('arm64e', fakeSpawn({
+    stdout: 'AppleKeyStoreController entry present\n',
+    status: 0,
+  }));
+  ok('F01-068 darwin arm64e (non-arm64) falls through to ioreg path, honours output',
+    // arm64e is NOT matched by the arm64 constant path, so spawnFn is called.
+    // output contains the string → present.
+    r.tpmPresent === true, JSON.stringify(r));
+}
+
+// F01-069: Windows powershell returns "True" → present.
+{
+  const r = _probeWindows(fakeSpawn({ stdout: 'True\n', status: 0 }));
+  ok('F01-069 windows Get-Tpm "True" → tpmPresent=true',
+    r.tpmPresent === true && r.mechanism !== null, JSON.stringify(r));
+}
+
+// F01-070: Windows powershell returns "False" → absent.
+{
+  const r = _probeWindows(fakeSpawn({ stdout: 'False\n', status: 0 }));
+  ok('F01-070 windows Get-Tpm "False" → tpmPresent=false',
+    r.tpmPresent === false, JSON.stringify(r));
+}
+
+// F01-071: Windows powershell exits non-zero → absent.
+{
+  const r = _probeWindows(fakeSpawn({ stdout: '', status: 1 }));
+  ok('F01-071 windows powershell non-zero exit → tpmPresent=false',
+    r.tpmPresent === false, JSON.stringify(r));
+}
+
+// F01-072: Windows spawnFn throws (binary missing / ENOENT) → absent, no throw.
+{
+  const r = _probeWindows(fakeSpawn({ throwErr: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }) }));
+  ok('F01-072 windows spawn throws → tpmPresent=false (no rethrow)',
+    r.tpmPresent === false, JSON.stringify(r));
 }
 
 // ---------------------------------------------------------------------------

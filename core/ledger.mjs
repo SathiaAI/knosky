@@ -114,7 +114,7 @@ export function writeHwm(hwmPath, seq) {
  * @param {number} seq                   Claimed sequence number from the incoming ledger state.
  * @param {string} hwmPath               Path to the independently-persisted HWM file.
  * @param {string} [checkpointPath]      Optional path to the append-only JSONL checkpoint file.
- * @returns {{ ok: boolean, seq: number, hwm: number, error?: string }}
+ * @returns {{ ok: boolean, seq: number, hwm: number, checkpoint_ok: boolean | null, checkpoint_error: string | null, error?: string }}
  */
 // Second layer of defense: enforced here too (not only in
 // core/freshness.mjs's extractLedgerSeq) so checkAndAdvance is safe even if
@@ -148,6 +148,8 @@ export function checkAndAdvance(seq, hwmPath, checkpointPath) {
 
   // SAT-561 (F0.2b): secondary append-only checkpoint write — best-effort,
   // never blocks or fails the primary HWM write.
+  let checkpoint_ok = null;
+  let checkpoint_error = null;
   if (checkpointPath !== undefined && checkpointPath !== null) {
     try {
       openCheckpoint(checkpointPath);
@@ -157,8 +159,13 @@ export function checkAndAdvance(seq, hwmPath, checkpointPath) {
         ts: new Date().toISOString(),
         hwm_previously: hwm,
       });
-    } catch { /* best-effort — checkpoint failure must not affect the primary write */ }
+      checkpoint_ok = true;
+    } catch (err) {
+      // best-effort — checkpoint failure must not affect the primary write
+      checkpoint_ok = false;
+      checkpoint_error = err.message || null;
+    }
   }
 
-  return { ok: true, seq, hwm };
+  return { ok: true, seq, hwm, checkpoint_ok, checkpoint_error };
 }

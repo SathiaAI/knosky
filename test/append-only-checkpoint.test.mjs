@@ -321,12 +321,19 @@ console.log('\n--- SAT-583  Test checkpoint error reporting ---');
 
   // Test case (a): Unwritable checkpoint path should still succeed with primary HWM write
   // but report checkpoint failure
-  const unwritablePath = '/root/unwritable-file.jsonl'; // This should fail due to permissions
+  // Using a path within our temp directory that we make unwritable to ensure test reliability
+  const unwritablePath = testPath('unwritable-file.jsonl');
+  // Make the directory unwritable (this will make unwritablePath unwritable)
+  fs.chmodSync(tmpDir, 0o444); // Read-only permissions
+
   const r1 = checkAndAdvance(1, hwmFile, unwritablePath);
   ok('SAT-583-a: checkpoint failure scenario - primary write ok=true', r1.ok === true, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_ok=false', r1.checkpoint_ok === false, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is not null', r1.checkpoint_error !== null, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is string', typeof r1.checkpoint_error === 'string', JSON.stringify(r1));
+
+  // Restore permissions for later tests
+  fs.chmodSync(tmpDir, 0o755);
 
   // Test case (b): Success path should show checkpoint_ok=true
   const cpFile = testPath('sat-583-success.jsonl');

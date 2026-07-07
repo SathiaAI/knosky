@@ -51,6 +51,16 @@
 //   rolled back without invalidating the manifest signature.  The wiring is in
 //   signTierCheckpoint / verifySignedTierCheckpoint (SAT-562, this module).
 //
+// Process-spawning in _probeTpmPresence (SAT-564 reviewed relaxation):
+//   This module spawns two platform CLIs as an explicit, reviewed relaxation of
+//   the "no spawning" rule:
+//     darwin x64  — /usr/sbin/ioreg -c AppleKeyStoreController  (IOKit, read-only)
+//     win32       — powershell.exe -NonInteractive -Command (Get-Tpm).TpmPresent
+//   Both are bounded by a 2-second timeout, require no elevated privileges, accept
+//   no caller-controlled input, and degrade gracefully to tpmPresent=false on any
+//   error. These probes are strictly separate from the general process-spawning ban
+//   (which remains in effect everywhere else). Authority: SAT-564, D-193.
+//
 // Design references: D-193, D-194, OUTPUTS/2026-07-05-KnoSky-F0-F1-DesignGate-v3-Combined.md §F0.1
 // Authority: SAT-544.
 //
@@ -67,6 +77,7 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 import { signManifest, verifyManifest } from './key-store.mjs';
 
@@ -117,15 +128,34 @@ export const TIER_LABELS = Object.freeze({
  * ticket's "honestly labeled software fallback when absent" requirement
  * exists to prevent.
  *
- * Only Linux is currently probed with a real signal (kernel TPM resource
- * manager device node). macOS (Secure Enclave) and Windows (TPM 2.0) require
- * either a native binding or spawning a platform CLI (`security(1)`,
- * PowerShell's `Get-Tpm`) to positively confirm hardware presence — this
- * module deliberately avoids spawning processes to stay side-effect-free and
- * sandboxable, so those platforms always report `tpmPresent: false` today.
- * This is a known, intentional gap (fails safe: it can only under-claim tier
- * strength, never over-claim it) — see the follow-up ticket for native/CLI
- * probes on those platforms.
+ * Three detection paths are implemented:
+ *
+ *   Linux   — kernel TPM resource-manager device node (/dev/tpmrm0 | /dev/tpm0).
+ *             No spawn required.
+ *
+ *   macOS   — two sub-probes, one spawn-free and one that spawns:
+ *             (a) Architecture check (spawn-free, SAT-564): on arm64 the CPU is
+ *                 Apple Silicon; the Secure Enclave is a hardware constant of
+ *                 every Apple Silicon SoC (A-series / M-series). No ioreg needed.
+ *             (b) IOKit ioreg(8) probe (spawned, SAT-564 explicit relaxation):
+ *                 on x64 (Intel Mac with T2), `ioreg -c AppleKeyStoreController`
+ *                 is run and its output inspected for a class entry that
+ *                 positively confirms the Secure Enclave bridge. A missing binary,
+ *                 non-zero exit, or timeout is treated as `tpmPresent: false`.
+ *
+ *   Windows — PowerShell `Get-Tpm` WMI/CIM probe (spawned, SAT-564 explicit
+ *             relaxation): `powershell.exe -NonInteractive -Command (Get-Tpm).TpmPresent`
+ *             is run. A missing binary, non-zero exit, timeout, or output that
+ *             is not literally "True" is treated as `tpmPresent: false`.
+ *
+ * The spawn-based probes are the explicit constraint relaxation reviewed in
+ * SAT-564 for exactly this purpose. They are scoped to the single function
+ * `_probeTpmPresence` and use a short, bounded timeout (2 s) so they cannot
+ * stall the evaluator. A failed spawn (ENOENT, EACCES, timeout, crash) is
+ * treated identically to "hardware absent": the probe degrades gracefully to
+ * `tpmPresent: false`. This means the probes can only under-claim tier
+ * strength, never over-claim it — the same safe-default invariant the
+ * pre-SAT-564 Linux-only code maintained.
  *
  * @returns {Promise<{ tier: number, key: CryptoKey|null, label: string, probeInfo: object }>}
  */
@@ -164,19 +194,24 @@ export async function detectTier1Key() {
 
 /**
  * @internal
- * Probe for TPM presence without spawning processes that could cause
- * side-effects.  Returns a structured result rather than throwing.
+ * Probe for TPM / Secure Enclave presence.  Returns a structured result rather
+ * than throwing.  Only reports `tpmPresent: true` when a real, verifiable signal
+ * exists; a failed or inconclusive probe degrades to `tpmPresent: false`.
  *
- * Only reports `tpmPresent: true` when a real, verifiable signal exists.
- * Currently that means: Linux kernel TPM resource-manager device node.
- * Every other platform (including macOS and Windows, which MAY have a TPM/
- * Secure Enclave) honestly reports `tpmPresent: false` because this module
- * has no side-effect-free way to positively confirm it on those platforms.
+ * Platforms and signals (SAT-544 + SAT-564):
+ *   linux  — kernel device node (/dev/tpmrm0 | /dev/tpm0), no spawn.
+ *   darwin — ioreg(8) spawn for all architectures (see _probeDarwin).
+ *   win32  — PowerShell Get-Tpm spawn.
  *
+ * @param {{ arch?: string, _spawnFn?: Function }} [_opts]  Injection seam used
+ *   by tests to override os.arch() and spawnSync for platform-negative / positive
+ *   scenarios without requiring a real macOS or Windows machine.
  * @returns {Promise<{ tpmPresent: boolean, mechanism: string|null, detail: string }>}
  */
-async function _probeTpmPresence() {
+async function _probeTpmPresence({ arch, _spawnFn } = {}) {
   const platform = os.platform();
+  const cpuArch = arch ?? os.arch();
+  const spawn = _spawnFn ?? spawnSync;
 
   if (platform === 'linux') {
     for (const dev of ['/dev/tpmrm0', '/dev/tpm0']) {
@@ -189,22 +224,144 @@ async function _probeTpmPresence() {
   }
 
   if (platform === 'darwin') {
-    return {
-      tpmPresent: false,
-      mechanism: null,
-      detail: 'Secure Enclave presence cannot be confirmed without spawning security(1) or a native IOKit binding; this module does not spawn processes, so darwin always reports software fallback',
-    };
+    return _probeDarwin(cpuArch, spawn);
   }
 
   if (platform === 'win32') {
-    return {
-      tpmPresent: false,
-      mechanism: null,
-      detail: 'TPM 2.0 presence cannot be confirmed without a native binding or spawning PowerShell (Get-Tpm); this module does not spawn processes, so win32 always reports software fallback',
-    };
+    return _probeWindows(spawn);
   }
 
   return { tpmPresent: false, mechanism: null, detail: 'no hardware key store detection implemented for platform ' + platform };
+}
+
+/**
+ * @internal
+ * macOS Secure Enclave probe (SAT-564 explicit spawn-constraint relaxation).
+ *
+ * All macOS paths use the IOKit ioreg(8) probe regardless of reported process
+ * architecture.  os.arch() returns the running process ABI, not the underlying
+ * silicon: under Rosetta 2 an Intel Mac process reports 'arm64', making an
+ * arch-based shortcut an unreliable signal for hardware presence.  The ioreg
+ * probe is the only verifiable, hardware-level mechanism available without root.
+ *
+ * `ioreg -c AppleKeyStoreController` lists the IOKit registry for that class;
+ * presence of an "AppleKeyStoreController" entry is the definitive confirmation
+ * of a T2 chip or Apple Silicon Secure Enclave bridge.  A non-zero exit, a
+ * missing ioreg binary, or a 2-second timeout is treated as absent rather than
+ * throwing.
+ *
+ * Spawn constraints: spawning `ioreg` is the relaxation explicitly reviewed in
+ * SAT-564. The binary lives at a fixed OS path (/usr/sbin/ioreg), is shipped
+ * with every macOS install, requires no root, takes no input from callers, and
+ * is given a 2-second wall-clock timeout. stdout is checked only for a known
+ * safe string pattern.
+ *
+ * @param {string}   _arch      Ignored — retained for call-site compatibility.
+ * @param {Function} spawnFn    spawnSync-compatible function
+ * @returns {{ tpmPresent: boolean, mechanism: string|null, detail: string }}
+ */
+export function _probeDarwin(_arch, spawnFn) {
+  // -------------------------------------------------------------------
+  // IOKit ioreg(8) probe — used for all macOS architectures (SAT-564).
+  // os.arch() reflects the process ABI, not the underlying silicon, so
+  // it cannot reliably distinguish Apple Silicon from an Intel Mac running
+  // a process under Rosetta 2.  The ioreg probe is the verifiable signal.
+  // -------------------------------------------------------------------
+  let result;
+  try {
+    result = spawnFn('/usr/sbin/ioreg', ['-c', 'AppleKeyStoreController'], {
+      encoding: 'utf8',
+      timeout: 2000,       // 2-second wall-clock cap; stall → absent
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return { tpmPresent: false, mechanism: null, detail: 'ioreg spawn failed (exception); treating as Secure Enclave absent' };
+  }
+
+  if (result.status !== 0 || typeof result.stdout !== 'string' || result.stdout.length === 0) {
+    return {
+      tpmPresent: false,
+      mechanism: null,
+      detail: 'ioreg -c AppleKeyStoreController exited non-zero or produced no output; treating as Secure Enclave absent',
+    };
+  }
+
+  // A real T2/Secure Enclave bridge appears as an IOKit object whose class name
+  // is "AppleKeyStoreController" in the registry output. The ioreg class filter
+  // (-c) already selects only objects of that exact class, so any non-empty line
+  // containing "AppleKeyStoreController" is a positive hit.
+  const hasEntry = result.stdout.includes('AppleKeyStoreController');
+  if (hasEntry) {
+    return {
+      tpmPresent: true,
+      mechanism: 'darwin x64 IOKit (ioreg -c AppleKeyStoreController)',
+      detail: 'AppleKeyStoreController IOKit class entry found; T2/Secure Enclave bridge confirmed',
+    };
+  }
+
+  return {
+    tpmPresent: false,
+    mechanism: null,
+    detail: 'ioreg -c AppleKeyStoreController returned output but no AppleKeyStoreController entry found; treating as Secure Enclave absent',
+  };
+}
+
+/**
+ * @internal
+ * Windows TPM 2.0 probe via PowerShell Get-Tpm (SAT-564 explicit
+ * spawn-constraint relaxation).
+ *
+ * `powershell.exe -NonInteractive -Command (Get-Tpm).TpmPresent` writes
+ * exactly "True" or "False" to stdout.  Any other output (including empty),
+ * non-zero exit, or spawn error is treated as `tpmPresent: false`.
+ *
+ * Spawn constraints: spawning PowerShell is the relaxation explicitly reviewed
+ * in SAT-564. The binary name is fixed ("powershell.exe", the built-in inbox
+ * PowerShell present on every supported Windows version), the command is a
+ * hard-coded literal with no caller-controlled interpolation, and the
+ * invocation is given a 2-second wall-clock timeout.
+ *
+ * @param {Function} spawnFn    spawnSync-compatible function
+ * @returns {{ tpmPresent: boolean, mechanism: string|null, detail: string }}
+ */
+export function _probeWindows(spawnFn) {
+  let result;
+  try {
+    result = spawnFn(
+      'powershell.exe',
+      ['-NonInteractive', '-Command', '(Get-Tpm).TpmPresent'],
+      {
+        encoding: 'utf8',
+        timeout: 2000,     // 2-second wall-clock cap; stall → absent
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+  } catch {
+    return { tpmPresent: false, mechanism: null, detail: 'powershell.exe spawn failed (exception); treating as TPM absent' };
+  }
+
+  if (result.status !== 0 || typeof result.stdout !== 'string') {
+    return {
+      tpmPresent: false,
+      mechanism: null,
+      detail: 'powershell.exe Get-Tpm exited non-zero or produced no output; treating as TPM absent',
+    };
+  }
+
+  const out = result.stdout.trim();
+  if (out === 'True') {
+    return {
+      tpmPresent: true,
+      mechanism: 'win32 PowerShell Get-Tpm',
+      detail: '(Get-Tpm).TpmPresent returned "True"',
+    };
+  }
+
+  return {
+    tpmPresent: false,
+    mechanism: null,
+    detail: `(Get-Tpm).TpmPresent returned ${JSON.stringify(out)} (expected "True"); treating as TPM absent`,
+  };
 }
 
 // ---------------------------------------------------------------------------

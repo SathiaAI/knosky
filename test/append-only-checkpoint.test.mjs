@@ -320,20 +320,23 @@ console.log('\n--- SAT-583  Test checkpoint error reporting ---');
   const hwmFile = testPath('sat-583.hwm.json');
 
   // Test case (a): Unwritable checkpoint path should still succeed with primary HWM write
-  // but report checkpoint failure
-  // Using a path within our temp directory that we make unwritable to ensure test reliability
-  const unwritablePath = testPath('unwritable-file.jsonl');
-  // Make the directory unwritable (this will make unwritablePath unwritable)
-  fs.chmodSync(tmpDir, 0o444); // Read-only permissions
+  // but report checkpoint failure.
+  // NOTE: chmod-based read-only simulation is a no-op here — FORGE's build box runs
+  // tests as root, and root bypasses permission bits entirely, so the checkpoint write
+  // would silently succeed and this test would fail its own assertions. Use an
+  // unconditional, root-proof failure instead: point the checkpoint path at a child of
+  // a path segment that is a regular FILE, not a directory. mkdirSync/appendFileSync
+  // through it always throws (EEXIST/ENOTDIR depending on path shape — verified empirically),
+  // regardless of uid.
+  const notADir = testPath('sat-583-not-a-dir');
+  writeFileSync(notADir, '');
+  const unwritablePath = join(notADir, 'unwritable-file.jsonl');
 
   const r1 = checkAndAdvance(1, hwmFile, unwritablePath);
   ok('SAT-583-a: checkpoint failure scenario - primary write ok=true', r1.ok === true, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_ok=false', r1.checkpoint_ok === false, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is not null', r1.checkpoint_error !== null, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is string', typeof r1.checkpoint_error === 'string', JSON.stringify(r1));
-
-  // Restore permissions for later tests
-  fs.chmodSync(tmpDir, 0o755);
 
   // Test case (b): Success path should show checkpoint_ok=true
   const cpFile = testPath('sat-583-success.jsonl');

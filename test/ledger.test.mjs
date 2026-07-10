@@ -1,6 +1,6 @@
 // KnoSky ledger high-water-mark guard tests (SAT-443 / SAT-476 / V13).
 // Run: node test/ledger.test.mjs
-import { mkdtempSync, rmSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readHwm, writeHwm, checkAndAdvance } from '../core/ledger.mjs';
@@ -225,21 +225,25 @@ function hwmPath(name) {
   const hwmFile = hwmPath('sat-583');
 
   // Test case (a): Unwritable checkpoint path should still succeed with primary HWM write
-  // but report checkpoint failure
-  // Using a path within our temp directory that we make unwritable to ensure test reliability
-  const unwritablePath = testPath('sat-583', 'unwritable-file.jsonl');
-  // Ensure the directory exists, then make it unwritable
-  fs.mkdirSync(testPath('sat-583'), {recursive: true});
-  fs.chmodSync(testPath('sat-583'), 0o444); // Read-only permissions
+  // but report checkpoint failure.
+  // NOTE: chmod-based read-only simulation is a no-op here — FORGE's build box runs
+  // tests as root, and root bypasses permission bits entirely, so the checkpoint write
+  // would silently succeed and this test would fail its own assertions. Use an
+  // unconditional, root-proof failure instead: point the checkpoint path at a child of
+  // a path segment that is a regular FILE, not a directory. mkdirSync/appendFileSync
+  // through it always throws (EEXIST/ENOTDIR depending on path shape — verified empirically),
+  // regardless of uid. (Previously this also referenced
+  // an undefined `testPath` helper — this file only defines `hwmPath`; fixed below, and
+  // the marker lives in its own subdir so it can never collide with hwmFile's.)
+  const notADir = join(tmpDir, 'sat-583-not-a-dir');
+  writeFileSync(notADir, '');
+  const unwritablePath = join(notADir, 'unwritable-file.jsonl');
 
   const r1 = checkAndAdvance(1, hwmFile, unwritablePath);
   ok('SAT-583-a: checkpoint failure scenario - primary write ok=true', r1.ok === true, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_ok=false', r1.checkpoint_ok === false, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is not null', r1.checkpoint_error !== null, JSON.stringify(r1));
   ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is string', typeof r1.checkpoint_error === 'string', JSON.stringify(r1));
-
-  // Restore permissions for later tests
-  fs.chmodSync(testPath('sat-583'), 0o755);
 
   // Test case (b): Success path should show checkpoint_ok=true
   const cpFile = hwmPath('sat-583-success.jsonl');

@@ -1,6 +1,6 @@
 // KnoSky ledger high-water-mark guard tests (SAT-443 / SAT-476 / V13).
 // Run: node test/ledger.test.mjs
-import { mkdtempSync, rmSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readHwm, writeHwm, checkAndAdvance } from '../core/ledger.mjs';
@@ -206,6 +206,58 @@ function hwmPath(name) {
   const rAdvance = checkAndAdvance(OLD_SEQ + 1, path);       // normal advance
   ok('(k) post-bypass: normal advance above reset baseline is accepted',
     rAdvance.ok === true, JSON.stringify(rAdvance));
+}
+
+// ===========================================================================
+// SAT-583  Test to verify checkpoint error reporting via checkAndAdvance
+//          (specifically checkAndAdvance's return fields).
+//
+// This test ensures checkAndAdvance now has:
+//   - new checkpoint_ok: true | false | null
+//   - new checkpoint_error: string | null
+//
+// Tests the following scenarios:
+//   (a) checkpoint failure (unwritable checkpointPath) → primary write still ok=true + checkpoint_ok=false + non-empty checkpoint_error
+//   (b) success path → checkpoint_ok=true
+//   (c) omitted path → checkpoint_ok=null
+// ===========================================================================
+{
+  const hwmFile = hwmPath('sat-583');
+
+  // Test case (a): Unwritable checkpoint path should still succeed with primary HWM write
+  // but report checkpoint failure.
+  // NOTE: chmod-based read-only simulation is a no-op here — FORGE's build box runs
+  // tests as root, and root bypasses permission bits entirely, so the checkpoint write
+  // would silently succeed and this test would fail its own assertions. Use an
+  // unconditional, root-proof failure instead: point the checkpoint path at a child of
+  // a path segment that is a regular FILE, not a directory. mkdirSync/appendFileSync
+  // through it always throws (EEXIST/ENOTDIR depending on path shape — verified empirically),
+  // regardless of uid. (Previously this also referenced
+  // an undefined `testPath` helper — this file only defines `hwmPath`; fixed below, and
+  // the marker lives in its own subdir so it can never collide with hwmFile's.)
+  const notADir = join(tmpDir, 'sat-583-not-a-dir');
+  writeFileSync(notADir, '');
+  const unwritablePath = join(notADir, 'unwritable-file.jsonl');
+
+  const r1 = checkAndAdvance(1, hwmFile, unwritablePath);
+  ok('SAT-583-a: checkpoint failure scenario - primary write ok=true', r1.ok === true, JSON.stringify(r1));
+  ok('SAT-583-a: checkpoint failure scenario - checkpoint_ok=false', r1.checkpoint_ok === false, JSON.stringify(r1));
+  ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is not null', r1.checkpoint_error !== null, JSON.stringify(r1));
+  ok('SAT-583-a: checkpoint failure scenario - checkpoint_error is string', typeof r1.checkpoint_error === 'string', JSON.stringify(r1));
+
+  // Test case (b): Success path should show checkpoint_ok=true
+  const cpFile = hwmPath('sat-583-success.jsonl');
+  const r2 = checkAndAdvance(2, hwmFile, cpFile);
+  ok('SAT-583-b: success path - primary write ok=true', r2.ok === true, JSON.stringify(r2));
+  ok('SAT-583-b: success path - checkpoint_ok=true', r2.checkpoint_ok === true, JSON.stringify(r2));
+  ok('SAT-583-b: success path - checkpoint_error is null', r2.checkpoint_error === null, JSON.stringify(r2));
+
+  // Test case (c): Omitted path should return checkpoint_ok=null
+  const hwmFile2 = hwmPath('sat-583b.hwm.json');
+  const r3 = checkAndAdvance(3, hwmFile2);
+  ok('SAT-583-c: omitted path - primary write ok=true', r3.ok === true, JSON.stringify(r3));
+  ok('SAT-583-c: omitted path - checkpoint_ok=null', r3.checkpoint_ok === null, JSON.stringify(r3));
+  ok('SAT-583-c: omitted path - checkpoint_error is null', r3.checkpoint_error === null, JSON.stringify(r3));
 }
 
 // ---------------------------------------------------------------------------

@@ -27,8 +27,8 @@ const subcommand = argv.find(a => !a.startsWith('--'));
 // ---------------------------------------------------------------------------
 if (subcommand === 'agent-register') {
   // Mode B: register local agent + mint lease in .knosky domain.
-  // Elevated classes / secured domains require --operator-token (or KC_OPERATOR_TOKEN).
-  // First operators: --bootstrap-operator (default dual tokens; optional --allow-single-operator).
+  // Elevated classes require TWO operator tokens (quorum).
+  // Bootstrap: --bootstrap-operator prints operator-a only; operator-b to 0600 file.
   const { loadDomain, registerAgentWithLease, resolveDomainRoot } = await import('../core/domain-store.mjs');
   const { bootstrapOperator } = await import('../core/operator-auth.mjs');
   const getArgVal = (name) => {
@@ -41,11 +41,20 @@ if (subcommand === 'agent-register') {
   };
   const domainRoot = resolveDomainRoot(undefined, getArgVal('--domain'));
   if (flags.has('--bootstrap-operator')) {
+    if (flags.has('--allow-single-operator')) {
+      console.error(JSON.stringify({
+        ok: false,
+        reason: 'allow_single_operator_disabled_for_elevated_guarantee',
+        next_action: 'Use dual bootstrap (default). Single-op cannot elevate classes; dual is required for Rule-3 quorum. If you truly need a single identity for public/internal only domain explore later via addOperator.',
+      }, null, 2));
+      process.exit(2);
+    }
     const boot = bootstrapOperator(domainRoot, {
       operatorId: getArgVal('--operator-id') || 'operator-a',
       operatorId2: getArgVal('--operator-id-2') || 'operator-b',
-      allowSingleOperator: flags.has('--allow-single-operator'),
     });
+    // Dual separation: only operator-a raw token on stdout.
+    // operator-b is file-only (tokenFileB path + fingerprint in response — not its secret).
     console.log(JSON.stringify({
       domain: domainRoot,
       ok: boot.ok,
@@ -53,9 +62,11 @@ if (subcommand === 'agent-register') {
       reason: boot.reason,
       operatorId: boot.operatorId,
       operatorToken: boot.operatorToken,
+      fingerprint: boot.fingerprint,
       operatorId2: boot.operatorId2,
-      operatorToken2: boot.operatorToken2,
-      operators: boot.operators,
+      fingerprint2: boot.fingerprint2,
+      tokenFileB: boot.tokenFileB,
+      tokenB_delivery: boot.tokenB_delivery,
       warning: boot.warning,
     }, null, 2));
     process.exit(boot.ok ? 0 : 1);
@@ -63,12 +74,13 @@ if (subcommand === 'agent-register') {
   const agentId = getArgVal('--agent') || getArgVal('--id') || 'local-agent';
   const domain = loadDomain(domainRoot);
   const classes = (getArgVal('--classes') || 'public,internal').split(',').map(s => s.trim()).filter(Boolean);
-  // Flag name is plain CLI text. Token value comes from argv or env only (never hardcoded).
+  // Flag names are plain CLI text. Token values come only from argv/env (never hardcoded).
   const operatorToken = getArgVal('--operator-token') || process.env.KC_OPERATOR_TOKEN;
+  const operatorToken2 = getArgVal('--operator-token-2') || process.env.KC_OPERATOR_TOKEN_2;
   const out = registerAgentWithLease(
     domain,
     { agentId, classes, role: getArgVal('--role') || 'coder' },
-    { operatorToken },
+    { operatorToken, operatorToken2 },
   );
   if (!out.ok) {
     console.error(JSON.stringify({ domain: domainRoot, ...out }, null, 2));
@@ -79,7 +91,7 @@ if (subcommand === 'agent-register') {
     domain: domainRoot,
     agentId: out.agentId,
     leaseId: out.leaseId,
-    hint: 'Pass leaseId to kc_route / kc_policy_check / kc_bundle (Mode B). Elevated classes and secured domains need operatorToken.',
+    hint: 'Pass leaseId to kc_route / kc_policy_check / kc_bundle (Mode B). Elevated classes need --operator-token AND --operator-token-2 (quorum).',
   }, null, 2));
   process.exit(0);
 }

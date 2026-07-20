@@ -8,6 +8,9 @@
 
 ---
 
+
+> **Trust / updates relationship:** KnoSky is not an implementation of The Update Framework (TUF), is not TUF-compatible by claim, and does not replace software-update verification systems. Local Mode B receipts are metadata audit events for agent routing—not a TUF repository role model.
+
 ## See it in 10 seconds
 
 Open **[`demo/knosky-demo.html`](./demo/knosky-demo.html)** in your browser (just double-click it — it's a single self-contained file). That's a sample project rendered as a city. Now point it at your own.

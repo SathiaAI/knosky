@@ -43,10 +43,19 @@ export function createModeBDoor(opts) {
   }
   const cityPath = opts.cityPath;
   const domainRoot = resolveDomainRoot(cityPath, opts.domainRoot);
-  const domain = loadDomain(domainRoot);
+  // Reload domain on each handle() so lease revoke / policy updates are visible
+  // without process restart (stale-state window closed at request boundary).
+  let domain = loadDomain(domainRoot);
   const profile = opts.profile || process.env.KC_PROFILE || 'coding';
 
+  function refreshDomain() {
+    domain = loadDomain(domainRoot);
+    return domain;
+  }
+
   function bindIdentity(req) {
+    // Always re-read domain so revocations / policy edits apply mid-process.
+    refreshDomain();
     // Advisory path may skip identity
     if (req.advisory || profile === 'advisory') {
       return { ok: true, advisory: true, agentId: null, lease: null };
@@ -336,8 +345,13 @@ export function createModeBDoor(opts) {
   }
 
   return {
-    domainRoot,
-    domain,
+    get domainRoot() {
+      return domainRoot;
+    },
+    get domain() {
+      return domain;
+    },
+    refreshDomain,
     profile,
     handle,
   };

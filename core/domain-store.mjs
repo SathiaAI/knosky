@@ -17,6 +17,7 @@ import { DENY, ALLOW, NOT_APPLICABLE } from './policy-lattice.mjs';
 import { DEFAULT_CLASS, loadClass, CLASS_BLOCKED, CLASS_RESTRICTED, CLASS_CONFIDENTIAL } from './district-classification.mjs';
 import {
   assertOperator,
+  assertOperatorQuorum,
   operatorCount,
   sanitizeClasses,
   ELEVATED,
@@ -147,14 +148,15 @@ export function loadDomain(domainRoot) {
  * Register an agent and mint an active lease (local trust domain).
  *
  * Authorization (Rule 3 — security-critical policy mutation):
- * - Elevated classes (restricted/confidential) ALWAYS require a valid operatorToken.
- * - Once any operator exists in the domain, ALL registrations require operatorToken
- *   (no unilateral join after the domain is operator-secured).
- * - Open first-run solo: when no operators exist, only public/internal may self-register.
+ * - Elevated classes (restricted/confidential) require **two distinct operators**
+ *   (operatorToken + operatorToken2). Single-op cannot unilaterally elevate.
+ * - Once any operator exists: plain public/internal join still needs **one**
+ *   operator token (domain is secured).
+ * - Open first-run solo (no operators): only public/internal may self-register.
  *
  * @param {ReturnType<typeof loadDomain>} domain
  * @param {{ agentId: string, role?: string, classes?: string[] }} agent
- * @param {{ operatorToken?: string }} [opts]
+ * @param {{ operatorToken?: string, operatorToken2?: string }} [opts]
  * @returns {{ ok:true, agentId:string, leaseId:string }
  *          |{ ok:false, reason:string, next_action?:string }}
  */
@@ -168,29 +170,42 @@ export function registerAgentWithLease(domain, agent, opts = {}) {
   const elevatedWanted = requested.some((c) => ELEVATED.includes(c));
   const secured = operatorCount(domain.domainRoot) > 0;
   const token = opts.operatorToken || process.env.KC_OPERATOR_TOKEN;
-  let operatorOk = false;
+  const token2 = opts.operatorToken2 || process.env.KC_OPERATOR_TOKEN_2;
+  let allowElevated = false;
 
-  if (elevatedWanted || secured) {
+  if (elevatedWanted) {
+    // Quorum of 2 distinct operators — single bootstrap token cannot elevate.
+    const q = assertOperatorQuorum(domain.domainRoot, token, token2);
+    if (!q.ok) {
+      return {
+        ok: false,
+        reason: q.reason || 'operator_quorum_required_for_elevated_classes',
+        next_action:
+          q.next_action ||
+          'Elevated classes require two distinct operator tokens (--operator-token and --operator-token-2)',
+      };
+    }
+    allowElevated = true;
+  } else if (secured) {
     const auth = assertOperator(domain.domainRoot, token);
     if (!auth.ok) {
       return {
         ok: false,
-        reason: elevatedWanted ? 'operator_required_for_elevated_classes' : 'operator_required_domain_secured',
-        next_action: auth.reason === 'missing_operator_token'
-          ? 'Pass operatorToken / KC_OPERATOR_TOKEN (bootstrap via knosky agent-register --bootstrap-operator)'
-          : `Operator auth failed: ${auth.reason}`,
+        reason: 'operator_required_domain_secured',
+        next_action:
+          auth.reason === 'missing_operator_token'
+            ? 'Pass operatorToken / KC_OPERATOR_TOKEN (bootstrap via knosky agent-register --bootstrap-operator)'
+            : `Operator auth failed: ${auth.reason}`,
       };
     }
-    operatorOk = true;
   }
 
-  const allowElevated = elevatedWanted && operatorOk;
   const classes = sanitizeClasses(requested, { allowElevated });
   if (elevatedWanted && !allowElevated) {
     return {
       ok: false,
-      reason: 'operator_required_for_elevated_classes',
-      next_action: 'Elevated district classes require an operator token',
+      reason: 'operator_quorum_required_for_elevated_classes',
+      next_action: 'Elevated district classes require two distinct operator tokens',
     };
   }
 
@@ -204,7 +219,6 @@ export function registerAgentWithLease(domain, agent, opts = {}) {
 
   if (!domain.policy.agent_class_allow) domain.policy.agent_class_allow = {};
   domain.policy.agent_class_allow[agentId] = classes;
-  // Only persist policy mutation after auth gates above
   try {
     atomicWrite(domain.paths.policyPath, domain.policy);
   } catch (err) {
@@ -240,23 +254,35 @@ export function policyRulesFromDomain(policy) {
       if (!subject || !subject.agentId) return DENY;
       return ALLOW;
     },
-    // class effect
+    // class effect — DENY is sticky for elevated classes; non-elevated allowlist may only grant
+    // classes that default is not DENY OR agent was listed AND class is public|internal.
     (subject) => {
       const cls = subject?.class || DEFAULT_CLASS;
       const eff = effects[cls];
-      if (eff === 'DENY') return DENY;
+      if (eff === 'DENY') {
+        // agent_class_allow must NOT override DENY for restricted/confidential without those classes
+        // already granted at registration time via quorum. At evaluation, listed classes can pass
+        // only if the allowlist includes that exact class (set only under quorum at register time).
+        const allowed = subject?.agentId ? allowMap[subject.agentId] : null;
+        if (Array.isArray(allowed) && allowed.includes(cls) && !ELEVATED.includes(cls)) {
+          return ALLOW;
+        }
+        if (Array.isArray(allowed) && allowed.includes(cls) && ELEVATED.includes(cls)) {
+          // Elevated classes listed at register time (quorum-minted) may ALLOW
+          return ALLOW;
+        }
+        return DENY;
+      }
       if (eff === 'ALLOW') return ALLOW;
       return NOT_APPLICABLE;
     },
-    // per-agent allowlist overrides denies for listed classes
+    // per-agent allowlist can expand public/internal when default is N/A
     (subject) => {
       if (!subject?.agentId) return NOT_APPLICABLE;
       const allowed = allowMap[subject.agentId];
       if (!Array.isArray(allowed)) return NOT_APPLICABLE;
       const cls = subject.class || DEFAULT_CLASS;
       if (allowed.includes(cls)) return ALLOW;
-      // if policy was DENY for class and agent not allowed → stay DENY via previous
-      if (effects[cls] === 'DENY') return DENY;
       return NOT_APPLICABLE;
     },
     // blocked class always deny

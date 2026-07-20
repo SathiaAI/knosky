@@ -20,10 +20,12 @@ import { writeDecisionReceipt } from './audit-writer.mjs';
 import { CODES } from './decision-codes.mjs';
 import {
   assertOperator,
+  assertOperatorQuorum,
   operatorCount,
   sanitizeClasses,
   ELEVATED,
 } from './operator-auth.mjs';
+import { resolveLeaseIdentity } from './local-ipc-identity.mjs';
 
 /** Default climate knobs (simple counter model). */
 export const DEFAULT_SWARM_QUOTAS = Object.freeze({
@@ -191,9 +193,8 @@ export function createSwarmCoordinator(opts = {}) {
 
   /**
    * Ensure agent is registered in the domain store (idempotent on same id).
-   * Policy mutation / elevated classes require operatorToken once domain is secured
-   * (same Rule 3 gates as domain-store.registerAgentWithLease).
-   * @param {{ agentId: string, role?: string, classes?: string[], operatorToken?: string }} agent
+   * Elevated classes require TWO distinct operator tokens (same Rule 3 as domain-store).
+   * @param {{ agentId: string, role?: string, classes?: string[], operatorToken?: string, operatorToken2?: string }} agent
    */
   function registerAgent(agent) {
     const agentId = agent.agentId;
@@ -202,44 +203,31 @@ export function createSwarmCoordinator(opts = {}) {
     }
 
     if (!domain.agents[agentId]) {
-      const requested = Array.isArray(agent.classes) ? agent.classes.map(String) : ['public', 'internal'];
-      const elevatedWanted = requested.some((c) => ELEVATED.includes(c));
-      const secured = operatorCount(domainRoot) > 0;
-      const token = agent.operatorToken || process.env.KC_OPERATOR_TOKEN;
-      if (elevatedWanted || secured) {
-        const auth = assertOperator(domainRoot, token);
-        if (!auth.ok) {
-          return {
-            ok: false,
-            code: CODES.DENY_IDENTITY,
-            reason: elevatedWanted ? 'operator_required_for_elevated_classes' : 'operator_required_domain_secured',
-            next_action: auth.reason,
-          };
-        }
-      }
-      const allowElevated = elevatedWanted && assertOperator(domainRoot, token).ok;
-      const classes = sanitizeClasses(requested, { allowElevated });
-      if (elevatedWanted && !allowElevated) {
+      const issued = registerAgentWithLease(
+        domain,
+        {
+          agentId,
+          role: agent.role || 'coder',
+          classes: Array.isArray(agent.classes) ? agent.classes : ['public', 'internal'],
+        },
+        {
+          operatorToken: agent.operatorToken || process.env.KC_OPERATOR_TOKEN,
+          operatorToken2: agent.operatorToken2 || process.env.KC_OPERATOR_TOKEN_2,
+        },
+      );
+      if (!issued.ok) {
         return {
           ok: false,
           code: CODES.DENY_IDENTITY,
-          reason: 'operator_required_for_elevated_classes',
+          reason: issued.reason,
+          next_action: issued.next_action,
         };
       }
-      domain.agents[agentId] = {
-        agentId,
-        role: agent.role || 'coder',
-        classes,
-        created_at: nowIso(),
-      };
-      domain.saveAgents();
-      if (!domain.policy.agent_class_allow) domain.policy.agent_class_allow = {};
-      domain.policy.agent_class_allow[agentId] = classes;
-      try {
-        atomicWriteSoft(domain.paths.policyPath, domain.policy);
-      } catch {
-        return { ok: false, code: CODES.DENY_AUDIT, reason: 'policy_persist_failed' };
-      }
+      // Reload after registerAgentWithLease mutated disk
+      const fresh = loadDomain(domainRoot);
+      domain.agents = fresh.agents;
+      domain.policy = fresh.policy;
+      domain.leaseStore = fresh.leaseStore;
     }
     emit(CODES.ALLOW, agentId, 'swarm_register', { event: 'agent_register' });
     noteAction(agentId);
@@ -248,8 +236,8 @@ export function createSwarmCoordinator(opts = {}) {
 
   /**
    * Issue a fresh active lease for an agent (wraps domain-store).
-   * Registers agent if missing (subject to operator gates).
-   * @param {{ agentId: string, role?: string, classes?: string[], ttlMs?: number|null, operatorToken?: string }} opts
+   * Registers agent if missing (subject to operator gates / quorum).
+   * @param {{ agentId: string, role?: string, classes?: string[], ttlMs?: number|null, operatorToken?: string, operatorToken2?: string }} opts
    */
   function issueLease(optsIn = {}) {
     const agentId = optsIn.agentId;
@@ -297,6 +285,7 @@ export function createSwarmCoordinator(opts = {}) {
     const classes = optsIn.classes || existing?.classes || ['public', 'internal'];
     const role = optsIn.role || existing?.role || 'coder';
     const operatorToken = optsIn.operatorToken || process.env.KC_OPERATOR_TOKEN;
+    const operatorToken2 = optsIn.operatorToken2 || process.env.KC_OPERATOR_TOKEN_2;
 
     // If agent already registered, mint lease without clobbering registry fields hard:
     let leaseId;
@@ -319,7 +308,7 @@ export function createSwarmCoordinator(opts = {}) {
       const issued = registerAgentWithLease(
         domain,
         { agentId, classes, role },
-        { operatorToken },
+        { operatorToken, operatorToken2 },
       );
       if (!issued.ok) {
         return {

@@ -1,8 +1,7 @@
 // Operator authorization for trust-domain security-critical mutations (DEC-106/109).
-// Local-only: operator tokens under .knosky/operators.json (SHA-256 hashes at rest).
-// Fail-closed. Bootstrap prefers dual-operator mint; single-operator only with
-// explicit --allow-single-operator. Operator revoke needs a DIFFERENT operator
-// (no unilateral self-revocation of operator status).
+// Local-only: operator tokens under .knosky/operators.json (SHA-256 hashes only).
+// Dual-operator default: elevated policy / class elevation needs TWO distinct operators.
+// Bootstrap never prints both raw tokens in one stdout payload.
 
 import {
   existsSync,
@@ -10,6 +9,7 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  chmodSync,
 } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -29,8 +29,16 @@ export function operatorsPath(domainRoot) {
   return join(domainRoot, OPS_FILE);
 }
 
+export function operatorTokenDir(domainRoot) {
+  return join(domainRoot, 'operator-tokens');
+}
+
 export function hashOperatorToken(token) {
   return createHash('sha256').update(String(token), 'utf8').digest('hex');
+}
+
+export function fingerprintToken(token) {
+  return hashOperatorToken(token).slice(0, 12);
 }
 
 export function mintOperatorToken() {
@@ -83,13 +91,31 @@ function addOperatorRecord(doc, operatorId) {
     token_hash: hashOperatorToken(token),
     created_at: new Date().toISOString(),
   };
-  return { ok: true, operatorId: id, operatorToken: token };
+  return { ok: true, operatorId: id, operatorToken: token, fingerprint: fingerprintToken(token) };
+}
+
+function writeTokenFile(domainRoot, operatorId, token) {
+  const dir = operatorTokenDir(domainRoot);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${operatorId}.token`);
+  writeFileSync(path, token + '\n', { encoding: 'utf8', mode: 0o600 });
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    /* windows may ignore */
+  }
+  return path;
 }
 
 /**
  * Bootstrap operators when none exist.
- * Default = dual operator (2 tokens) so no single local process is sole trust root
- * without a second material secret. Single-operator requires allowSingleOperator.
+ * ALWAYS creates two operators for a healthy domain.
+ * allowSingleOperator is rejected for production domains; only for multi-op fail,
+ * single is never enough for elevated class elevation later (quorum still needs 2).
+ *
+ * Token delivery (dual separation):
+ * - operator-a token printed once to stdout (reveal_a)
+ * - operator-b token written ONLY to a 0600 file; stdout gets path + fingerprint, not the raw second token
  *
  * @param {string} domainRoot
  * @param {{ operatorId?: string, operatorId2?: string, allowSingleOperator?: boolean }} [opts]
@@ -101,38 +127,69 @@ export function bootstrapOperator(domainRoot, opts = {}) {
     return { ok: false, reason: 'operators_already_exist' };
   }
 
-  const dual = opts.allowSingleOperator !== true;
+  // Dual is mandatory default. Single operator is an explicit escape hatch that
+  // can ONLY mint one operator record — and elevated policy still needs TWO
+  // distinct tokens (impossible with one → elevated remains blocked until second
+  // operator is added via addOperator).
+  const single = opts.allowSingleOperator === true;
+
   const a = addOperatorRecord(doc, opts.operatorId || 'operator-a');
   if (!a.ok) return a;
 
   /** @type {any} */
   const out = {
     ok: true,
-    mode: dual ? 'dual' : 'single',
-    operators: [{ operatorId: a.operatorId, operatorToken: a.operatorToken }],
+    mode: single ? 'single' : 'dual',
+    operatorId: a.operatorId,
+    // Only ONE raw token on the wire for dual mode.
+    operatorToken: a.operatorToken,
+    fingerprint: a.fingerprint,
     warning:
-      'Store operator token(s) offline. Shown once; only hashes retained on disk. Losing all tokens locks admin actions.',
+      'Store operator-a token offline. Dual mode embeds operator-b only on disk at tokenFileB (0600). ' +
+      'Elevated policy changes require TWO distinct operator tokens. Losing all tokens locks admin actions.',
   };
 
-  if (dual) {
+  if (!single) {
     const b = addOperatorRecord(doc, opts.operatorId2 || 'operator-b');
     if (!b.ok) return b;
-    out.operators.push({ operatorId: b.operatorId, operatorToken: b.operatorToken });
-    // Back-compat fields: first token still exposed at top level for simple CLIs
-    out.operatorId = a.operatorId;
-    out.operatorToken = a.operatorToken;
+    const tokenFileB = writeTokenFile(domainRoot, b.operatorId, b.operatorToken);
     out.operatorId2 = b.operatorId;
-    out.operatorToken2 = b.operatorToken;
+    out.fingerprint2 = b.fingerprint;
+    out.tokenFileB = tokenFileB;
+    // Do NOT set operatorToken2 in the bootstrap return used for stdout.
+    out.tokenB_delivery =
+      'operator-b raw token written only to tokenFileB — not printed alongside operator-a';
   } else {
-    out.operatorId = a.operatorId;
-    out.operatorToken = a.operatorToken;
     out.warning +=
-      ' Single-operator mode enabled via --allow-single-operator (weaker Bootstrap).';
+      ' SINGLE-OPERATOR manual escape: elevated class elevation stays blocked until a second operator is added (addOperator).';
   }
 
   doc.bootstrap_complete = true;
   saveOperators(domainRoot, doc);
   return out;
+}
+
+/**
+ * Add a second/later operator — requires an existing different operator token.
+ */
+export function addOperator(domainRoot, opts = {}) {
+  const caller = assertOperator(domainRoot, opts.callerOperatorToken);
+  if (!caller.ok) return { ok: false, reason: caller.reason };
+
+  const doc = loadOperators(domainRoot);
+  const added = addOperatorRecord(doc, opts.operatorId || `operator-${Date.now()}`);
+  if (!added.ok) return added;
+  saveOperators(domainRoot, doc);
+  const tokenFile = writeTokenFile(domainRoot, added.operatorId, added.operatorToken);
+  return {
+    ok: true,
+    operatorId: added.operatorId,
+    fingerprint: added.fingerprint,
+    tokenFile,
+    // Raw token returned only to caller over this API so CLI can choose delivery
+    operatorToken: added.operatorToken,
+    added_by: caller.operatorId,
+  };
 }
 
 /**
@@ -154,11 +211,37 @@ export function assertOperator(domainRoot, operatorToken) {
 }
 
 /**
- * Revoke an operator. Caller must be a DIFFERENT active operator (Rule 3:
- * no unilateral self-revocation of operator status). Last operator cannot be revoked.
- *
+ * Require TWO distinct valid operators (quorum for elevated / policy class elevation).
  * @param {string} domainRoot
- * @param {{ targetOperatorId: string, callerOperatorToken: string }} opts
+ * @param {string} [tokenA]
+ * @param {string} [tokenB]
+ */
+export function assertOperatorQuorum(domainRoot, tokenA, tokenB) {
+  const a = assertOperator(domainRoot, tokenA);
+  if (!a.ok) return { ok: false, reason: a.reason || 'operator_a_invalid', need: 2 };
+  const b = assertOperator(domainRoot, tokenB);
+  if (!b.ok) {
+    return {
+      ok: false,
+      reason: b.reason || 'operator_b_invalid',
+      need: 2,
+      next_action: 'Provide a second distinct operator token (--operator-token-2 / KC_OPERATOR_TOKEN_2)',
+    };
+  }
+  if (a.operatorId === b.operatorId) {
+    return {
+      ok: false,
+      reason: 'operator_tokens_not_distinct',
+      need: 2,
+      next_action: 'Quorum requires two different operators',
+    };
+  }
+  return { ok: true, operatorIds: [a.operatorId, b.operatorId] };
+}
+
+/**
+ * Revoke an operator. Caller must be a DIFFERENT active operator.
+ * Last operator cannot be revoked.
  */
 export function revokeOperator(domainRoot, opts = {}) {
   const caller = assertOperator(domainRoot, opts.callerOperatorToken);
@@ -228,7 +311,7 @@ export function authorizeMutation(domainRoot, opts = {}) {
     action,
     next_action:
       operatorCount(domainRoot) === 0
-        ? 'Run: knosky agent-register --bootstrap-operator  (saves two operator tokens by default)'
-        : 'Pass operatorToken (KC_OPERATOR_TOKEN or --operator-token) for policy/lease admin actions',
+        ? 'Run: knosky agent-register --bootstrap-operator (dual operators; elevated needs both tokens)'
+        : 'Pass operatorToken / KC_OPERATOR_TOKEN for admin actions; elevated needs a second token too',
   };
 }

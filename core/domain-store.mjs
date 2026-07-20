@@ -10,6 +10,8 @@ import {
   openSync,
   fsyncSync,
   closeSync,
+  unlinkSync,
+  chmodSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -71,6 +73,13 @@ function readJson(path, fallback) {
  */
 export function ensureDomainLayout(domainRoot) {
   mkdirSync(domainRoot, { recursive: true });
+  // Best-effort owner-only domain dir (Unix). Windows ACLs are out of process scope;
+  // local disk write capability is the trust boundary for policy.json / leases.
+  try {
+    chmodSync(domainRoot, 0o700);
+  } catch {
+    /* ignore — platform may not support POSIX mode bits */
+  }
   mkdirSync(join(domainRoot, 'audit'), { recursive: true });
   const agentsPath = join(domainRoot, 'agents.json');
   const leasesPath = join(domainRoot, 'leases.json');

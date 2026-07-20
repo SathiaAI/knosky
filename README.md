@@ -9,7 +9,7 @@
 ---
 
 
-> **Trust / updates relationship:** KnoSky is not an implementation of The Update Framework (TUF), is not TUF-compatible by claim, and does not replace software-update verification systems. Local Mode B receipts are metadata audit events for agent routing—not a TUF repository role model.
+> **Trust model (approved wording):** KnoSky's local trust model applies the core security principles of TUF — role separation, threshold signing, survivable key compromise, and freshness-guaranteed revocation — adapted from TUF's server-oriented update distribution to a fully local, no-egress agentic environment, with attestation formats based on in-toto/DSSE.
 
 ## See it in 10 seconds
 

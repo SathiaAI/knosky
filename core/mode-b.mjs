@@ -37,6 +37,10 @@ import { loadClass, DEFAULT_CLASS } from './district-classification.mjs';
  */
 export function createModeBDoor(opts) {
   const cityCtx = opts.cityCtx;
+  // Normalize byId so route/filter code never assumes Map vs plain object.
+  if (cityCtx && cityCtx.byId && typeof cityCtx.byId.get !== 'function') {
+    cityCtx.byId = new Map(Object.entries(cityCtx.byId));
+  }
   const cityPath = opts.cityPath;
   const domainRoot = resolveDomainRoot(cityPath, opts.domainRoot);
   const domain = loadDomain(domainRoot);

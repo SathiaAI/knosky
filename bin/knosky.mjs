@@ -46,16 +46,33 @@ if (subcommand === 'agent-register') {
 }
 
 if (subcommand === 'doctor') {
-  const { doctorLines } = await import('../core/net-lockdown.mjs');
-  console.log('\nKnoSky doctor — sandbox + security status\n');
-  for (const line of doctorLines()) console.log(line);
-  console.log('');
-  process.exit(0);
+  const { doctorScorecardLines, buildDoctorScorecard, doctorExitCode } = await import('../core/doctor-scorecard.mjs');
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
+    return undefined;
+  };
+  const domain = getArgVal('--domain');
+  const city = getArgVal('--city');
+  const json = flags.has('--json');
+  const card = buildDoctorScorecard({ domainRoot: domain, cityPath: city });
+  if (json) {
+    console.log(JSON.stringify(card, null, 2));
+  } else {
+    console.log('');
+    for (const line of doctorScorecardLines({ domainRoot: domain, cityPath: city })) console.log(line);
+    console.log('');
+  }
+  process.exit(doctorExitCode(card));
 }
 
 // ---------------------------------------------------------------------------
 // swarm subcommand: L3 operator heatmap / status (DEC-113 thin floor)
 //   knosky swarm status [--domain <path>]
+//   knosky swarm bench  [--domain <path>]
 // ---------------------------------------------------------------------------
 if (subcommand === 'swarm') {
   const { readSwarmHeatmap, createSwarmCoordinator } = await import('../core/swarm-coordinator.mjs');
@@ -83,7 +100,14 @@ if (subcommand === 'swarm') {
     process.exit(out.ok ? 0 : 1);
   }
 
-  console.error('KnoSky swarm: unknown action "' + action + '". Try: knosky swarm status');
+  if (action === 'bench') {
+    const { runSwarmBench } = await import('../core/swarm-bench.mjs');
+    const out = runSwarmBench({ domainRoot });
+    console.log(JSON.stringify(out, null, 2));
+    process.exit(out.ok ? 0 : 1);
+  }
+
+  console.error('KnoSky swarm: unknown action "' + action + '". Try: knosky swarm status | knosky swarm bench');
   process.exit(2);
 }
 

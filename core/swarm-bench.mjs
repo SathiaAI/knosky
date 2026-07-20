@@ -26,10 +26,12 @@ export function runSwarmBench(opts = {}) {
       agentId: 'bench-a',
       classes: ['public', 'internal'],
     });
+    if (!a.ok) throw new Error('register A failed: ' + a.reason);
     const b = registerAgentWithLease(domain, {
       agentId: 'bench-b',
       classes: ['public', 'internal'],
     });
+    if (!b.ok) throw new Error('register B failed: ' + b.reason);
     const coord = createSwarmCoordinator({
       domainRoot,
       domain: loadDomain(domainRoot),

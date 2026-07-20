@@ -152,8 +152,8 @@ test('lease expire and revoke bind for Mode B identity helper', () => {
     const issued = swarm.issueLease({ agentId: 'ephem', ttlMs: 1 });
     assert.equal(issued.ok, true);
 
-    // Force-expire path
-    const exp = swarm.expireLease(issued.leaseId);
+    // Force-expire path (holder)
+    const exp = swarm.expireLease(issued.leaseId, { callerAgentId: 'ephem' });
     assert.equal(exp.ok, true);
     assert.equal(exp.status, 'expired');
     const bad = resolveLeaseIdentity(swarm.domain.leaseStore, issued.leaseId, 'ephem');
@@ -161,7 +161,12 @@ test('lease expire and revoke bind for Mode B identity helper', () => {
     assert.equal(bad.reason, 'lease_expired');
 
     const issued2 = swarm.issueLease({ agentId: 'ephem' });
-    const rev = swarm.revokeLease(issued2.leaseId, { reason: 'test' });
+    // Foreign revoke without operator must fail
+    const foreign = swarm.revokeLease(issued2.leaseId, { reason: 'hostile', callerAgentId: 'other' });
+    assert.equal(foreign.ok, false);
+    assert.equal(foreign.reason, 'operator_or_holder_required');
+    // Holder self-revoke OK
+    const rev = swarm.revokeLease(issued2.leaseId, { reason: 'test', callerAgentId: 'ephem' });
     assert.equal(rev.ok, true);
     const bad2 = resolveLeaseIdentity(swarm.domain.leaseStore, issued2.leaseId, 'ephem');
     assert.equal(bad2.ok, false);

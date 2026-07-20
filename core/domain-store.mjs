@@ -15,6 +15,12 @@ import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DENY, ALLOW, NOT_APPLICABLE } from './policy-lattice.mjs';
 import { DEFAULT_CLASS, loadClass, CLASS_BLOCKED, CLASS_RESTRICTED, CLASS_CONFIDENTIAL } from './district-classification.mjs';
+import {
+  assertOperator,
+  operatorCount,
+  sanitizeClasses,
+  ELEVATED,
+} from './operator-auth.mjs';
 
 /**
  * Resolve domain root (.knosky dir) from city path or explicit env.
@@ -138,25 +144,69 @@ export function loadDomain(domainRoot) {
 }
 
 /**
- * Register an agent and mint an active lease (local BCL).
+ * Register an agent and mint an active lease (local trust domain).
+ *
+ * Authorization (Rule 3 — security-critical policy mutation):
+ * - Elevated classes (restricted/confidential) ALWAYS require a valid operatorToken.
+ * - Once any operator exists in the domain, ALL registrations require operatorToken
+ *   (no unilateral join after the domain is operator-secured).
+ * - Open first-run solo: when no operators exist, only public/internal may self-register.
+ *
  * @param {ReturnType<typeof loadDomain>} domain
  * @param {{ agentId: string, role?: string, classes?: string[] }} agent
+ * @param {{ operatorToken?: string }} [opts]
+ * @returns {{ ok:true, agentId:string, leaseId:string }
+ *          |{ ok:false, reason:string, next_action?:string }}
  */
-export function registerAgentWithLease(domain, agent) {
-  const agentId = agent.agentId;
-  if (!agentId || typeof agentId !== 'string') throw new TypeError('agentId required');
+export function registerAgentWithLease(domain, agent, opts = {}) {
+  const agentId = agent?.agentId;
+  if (!agentId || typeof agentId !== 'string') {
+    return { ok: false, reason: 'agentId_required' };
+  }
+
+  const requested = Array.isArray(agent.classes) ? agent.classes.map(String) : ['public', 'internal'];
+  const elevatedWanted = requested.some((c) => ELEVATED.includes(c));
+  const secured = operatorCount(domain.domainRoot) > 0;
+
+  if (elevatedWanted || secured) {
+    const auth = assertOperator(domain.domainRoot, opts.operatorToken || process.env.KC_OPERATOR_TOKEN);
+    if (!auth.ok) {
+      return {
+        ok: false,
+        reason: elevatedWanted ? 'operator_required_for_elevated_classes' : 'operator_required_domain_secured',
+        next_action: auth.reason === 'missing_operator_token'
+          ? 'Pass operatorToken / KC_OPERATOR_TOKEN (bootstrap via knosky agent-register --bootstrap-operator)'
+          : `Operator auth failed: ${auth.reason}`,
+      };
+    }
+  }
+
+  const allowElevated = elevatedWanted && assertOperator(domain.domainRoot, opts.operatorToken || process.env.KC_OPERATOR_TOKEN).ok;
+  const classes = sanitizeClasses(requested, { allowElevated });
+  if (elevatedWanted && !allowElevated) {
+    return {
+      ok: false,
+      reason: 'operator_required_for_elevated_classes',
+      next_action: 'Elevated district classes require an operator token',
+    };
+  }
+
   domain.agents[agentId] = {
     agentId,
     role: agent.role || 'coder',
-    classes: agent.classes || ['public', 'internal'],
+    classes,
     created_at: new Date().toISOString(),
   };
   domain.saveAgents();
 
-  // put allow list
   if (!domain.policy.agent_class_allow) domain.policy.agent_class_allow = {};
-  domain.policy.agent_class_allow[agentId] = domain.agents[agentId].classes;
-  atomicWrite(domain.paths.policyPath, domain.policy);
+  domain.policy.agent_class_allow[agentId] = classes;
+  // Only persist policy mutation after auth gates above
+  try {
+    atomicWrite(domain.paths.policyPath, domain.policy);
+  } catch (err) {
+    return { ok: false, reason: `policy_persist_failed: ${err.message || err}` };
+  }
 
   const leaseId = `lease_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const rec = {
@@ -168,7 +218,7 @@ export function registerAgentWithLease(domain, agent) {
   };
   domain.leaseStore.set(leaseId, rec);
   domain.saveLeases();
-  return { agentId, leaseId };
+  return { ok: true, agentId, leaseId };
 }
 
 /**

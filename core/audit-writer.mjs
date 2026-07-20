@@ -183,6 +183,7 @@ export function verifyAuditChain(domainRoot) {
   if (!existsSync(eventsPath)) return { ok: true, count: 0 };
   const lines = readFileSync(eventsPath, 'utf8').split(/\r?\n/).filter(Boolean);
   let prev = null;
+  let prevSeq = 0;
   for (let i = 0; i < lines.length; i++) {
     let row;
     try {
@@ -198,6 +199,24 @@ export function verifyAuditChain(domainRoot) {
     }
     if (i > 0 && body.prev_hash !== prev) {
       return { ok: false, at: i, reason: 'prev_hash_break', receipt_id: row.receipt_id };
+    }
+    // Monotone contiguous ledger_seq (when present)
+    if (Number.isInteger(row.ledger_seq)) {
+      if (i === 0) {
+        if (row.ledger_seq < 1) {
+          return { ok: false, at: i, reason: 'seq_invalid', receipt_id: row.receipt_id };
+        }
+      } else if (row.ledger_seq !== prevSeq + 1) {
+        return {
+          ok: false,
+          at: i,
+          reason: 'seq_not_contiguous',
+          receipt_id: row.receipt_id,
+          expected: prevSeq + 1,
+          got: row.ledger_seq,
+        };
+      }
+      prevSeq = row.ledger_seq;
     }
     prev = event_hash;
   }

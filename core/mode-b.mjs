@@ -98,12 +98,18 @@ export function createModeBDoor(opts) {
   function filterRouteByPolicy(routeDoc, agentId) {
     // Drop waypoints whose node class is denied for agent
     const rules = policyRulesFromDomain(domain.policy);
+    const getNodeById = (id) => {
+      if (!id || !cityCtx?.byId) return null;
+      if (typeof cityCtx.byId.get === 'function') return cityCtx.byId.get(id) || null;
+      return cityCtx.byId[id] || null;
+    };
     const filterList = (arr) => {
       if (!Array.isArray(arr)) return [];
       return arr.filter((e) => {
         const id = e.id || (e.path ? `fs:${e.path}` : null);
         let cls = DEFAULT_CLASS;
-        if (id && cityCtx.byId.has(id)) cls = loadClass(cityCtx.byId.get(id));
+        const node = getNodeById(id);
+        if (node) cls = loadClass(node);
         const { decision } = evaluate(rules, { agentId, class: cls, tool: 'route' });
         return decision !== DENY;
       });
@@ -309,11 +315,19 @@ export function createModeBDoor(opts) {
 
       return envelope({ code: CODES.ERROR_INVALID_INPUT, mode: 'B', request_id });
     } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      // Do not mask security-path failures as "bad input"
+      const securityish =
+        /audit|ledger|hwm|policy|identity|lease|operator|deny|fsync|permission|EPERM|ENOSPC/i.test(
+          msg,
+        );
       return envelope({
-        code: CODES.ERROR_INVALID_INPUT,
+        code: securityish ? CODES.DENY_AUDIT : CODES.ERROR_INVALID_INPUT,
         mode: 'B',
         request_id,
-        next_action: err && err.message ? err.message : String(err),
+        next_action: securityish
+          ? `Security path error (fail-closed): ${msg.slice(0, 200)}`
+          : msg.slice(0, 200),
       });
     }
   }

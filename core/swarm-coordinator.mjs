@@ -18,6 +18,12 @@ import {
 } from './domain-store.mjs';
 import { writeDecisionReceipt } from './audit-writer.mjs';
 import { CODES } from './decision-codes.mjs';
+import {
+  assertOperator,
+  operatorCount,
+  sanitizeClasses,
+  ELEVATED,
+} from './operator-auth.mjs';
 
 /** Default climate knobs (simple counter model). */
 export const DEFAULT_SWARM_QUOTAS = Object.freeze({
@@ -185,27 +191,54 @@ export function createSwarmCoordinator(opts = {}) {
 
   /**
    * Ensure agent is registered in the domain store (idempotent on same id).
-   * @param {{ agentId: string, role?: string, classes?: string[] }} agent
+   * Policy mutation / elevated classes require operatorToken once domain is secured
+   * (same Rule 3 gates as domain-store.registerAgentWithLease).
+   * @param {{ agentId: string, role?: string, classes?: string[], operatorToken?: string }} agent
    */
   function registerAgent(agent) {
     const agentId = agent.agentId;
     if (!agentId || typeof agentId !== 'string') {
       return { ok: false, code: CODES.ERROR_INVALID_INPUT, reason: 'agentId_required' };
     }
+
     if (!domain.agents[agentId]) {
+      const requested = Array.isArray(agent.classes) ? agent.classes.map(String) : ['public', 'internal'];
+      const elevatedWanted = requested.some((c) => ELEVATED.includes(c));
+      const secured = operatorCount(domainRoot) > 0;
+      const token = agent.operatorToken || process.env.KC_OPERATOR_TOKEN;
+      if (elevatedWanted || secured) {
+        const auth = assertOperator(domainRoot, token);
+        if (!auth.ok) {
+          return {
+            ok: false,
+            code: CODES.DENY_IDENTITY,
+            reason: elevatedWanted ? 'operator_required_for_elevated_classes' : 'operator_required_domain_secured',
+            next_action: auth.reason,
+          };
+        }
+      }
+      const allowElevated = elevatedWanted && assertOperator(domainRoot, token).ok;
+      const classes = sanitizeClasses(requested, { allowElevated });
+      if (elevatedWanted && !allowElevated) {
+        return {
+          ok: false,
+          code: CODES.DENY_IDENTITY,
+          reason: 'operator_required_for_elevated_classes',
+        };
+      }
       domain.agents[agentId] = {
         agentId,
         role: agent.role || 'coder',
-        classes: agent.classes || ['public', 'internal'],
+        classes,
         created_at: nowIso(),
       };
       domain.saveAgents();
       if (!domain.policy.agent_class_allow) domain.policy.agent_class_allow = {};
-      domain.policy.agent_class_allow[agentId] = domain.agents[agentId].classes;
+      domain.policy.agent_class_allow[agentId] = classes;
       try {
         atomicWriteSoft(domain.paths.policyPath, domain.policy);
       } catch {
-        /* best effort; lease issue still works */
+        return { ok: false, code: CODES.DENY_AUDIT, reason: 'policy_persist_failed' };
       }
     }
     emit(CODES.ALLOW, agentId, 'swarm_register', { event: 'agent_register' });
@@ -215,8 +248,8 @@ export function createSwarmCoordinator(opts = {}) {
 
   /**
    * Issue a fresh active lease for an agent (wraps domain-store).
-   * Registers agent if missing.
-   * @param {{ agentId: string, role?: string, classes?: string[], ttlMs?: number|null }} opts
+   * Registers agent if missing (subject to operator gates).
+   * @param {{ agentId: string, role?: string, classes?: string[], ttlMs?: number|null, operatorToken?: string }} opts
    */
   function issueLease(optsIn = {}) {
     const agentId = optsIn.agentId;
@@ -263,6 +296,7 @@ export function createSwarmCoordinator(opts = {}) {
     const existing = domain.agents[agentId];
     const classes = optsIn.classes || existing?.classes || ['public', 'internal'];
     const role = optsIn.role || existing?.role || 'coder';
+    const operatorToken = optsIn.operatorToken || process.env.KC_OPERATOR_TOKEN;
 
     // If agent already registered, mint lease without clobbering registry fields hard:
     let leaseId;
@@ -282,7 +316,19 @@ export function createSwarmCoordinator(opts = {}) {
       domain.leaseStore.set(leaseId, rec);
       domain.saveLeases();
     } else {
-      const issued = registerAgentWithLease(domain, { agentId, classes, role });
+      const issued = registerAgentWithLease(
+        domain,
+        { agentId, classes, role },
+        { operatorToken },
+      );
+      if (!issued.ok) {
+        return {
+          ok: false,
+          code: CODES.DENY_IDENTITY,
+          reason: issued.reason,
+          next_action: issued.next_action,
+        };
+      }
       leaseId = issued.leaseId;
       if (optsIn.ttlMs && Number.isFinite(optsIn.ttlMs) && optsIn.ttlMs > 0) {
         const rec = domain.leaseStore.get(leaseId);
@@ -310,16 +356,22 @@ export function createSwarmCoordinator(opts = {}) {
   }
 
   /**
-   * Expire a lease (terminal). cron-friendly: also used for TTL sweep.
+   * Expire a lease (TTL / sweep). Self-service expiration for system clock only
+   * via expireDueLeases; manual expire requires operator OR the holder agentId.
    * @param {string} leaseId
+   * @param {{ operatorToken?: string, callerAgentId?: string, system?: boolean }} [auth]
    */
-  function expireLease(leaseId) {
+  function expireLease(leaseId, auth = {}) {
     const lease = domain.leaseStore.get(leaseId);
     if (!lease) {
       return { ok: false, code: CODES.DENY_IDENTITY, reason: 'unknown_lease_id' };
     }
     if (lease.status !== 'active') {
       return { ok: true, code: CODES.ALLOW, leaseId, status: lease.status, noop: true };
+    }
+    if (!auth.system) {
+      const gate = authorizeLeaseAdmin(lease, auth);
+      if (!gate.ok) return gate;
     }
     lease.status = 'expired';
     lease.expired_at = nowIso();
@@ -341,26 +393,30 @@ export function createSwarmCoordinator(opts = {}) {
   }
 
   /**
-   * Revoke a lease (security / operator).
+   * Revoke a lease (security / operator OR holder self-revoke).
+   * Foreign revocation requires operatorToken — never unilateral third-party.
    * @param {string} leaseId
-   * @param {{ reason?: string }} [meta]
+   * @param {{ reason?: string, operatorToken?: string, callerAgentId?: string }} [meta]
    */
   function revokeLease(leaseId, meta = {}) {
     const lease = domain.leaseStore.get(leaseId);
     if (!lease) {
       return { ok: false, code: CODES.DENY_IDENTITY, reason: 'unknown_lease_id' };
     }
+    const gate = authorizeLeaseAdmin(lease, meta);
+    if (!gate.ok) return gate;
+
     lease.status = 'revoked';
     lease.revoked_at = nowIso();
-    lease.revoke_reason = meta.reason || 'operator';
+    lease.revoke_reason = meta.reason || (gate.mode === 'holder' ? 'self_revoke' : 'operator');
+    lease.revoked_by = gate.mode === 'operator' ? gate.operatorId : lease.agentId;
     domain.leaseStore.set(leaseId, lease);
     domain.saveLeases();
-    // Drop claims held under this agent when its revoke cascades? keep claims until release;
-    // identity of leaseRod is more important for Mode B gate.
     const rc = emit(CODES.ALLOW, lease.agentId, 'swarm_lease_revoke', {
       event: 'lease_revoked',
       lease_id: leaseId,
       reason: lease.revoke_reason,
+      by: lease.revoked_by,
     });
     writeHeatmap();
     return {
@@ -373,8 +429,27 @@ export function createSwarmCoordinator(opts = {}) {
     };
   }
 
+  /** @param {any} lease @param {{ operatorToken?: string, callerAgentId?: string }} auth */
+  function authorizeLeaseAdmin(lease, auth = {}) {
+    const token = auth.operatorToken || process.env.KC_OPERATOR_TOKEN;
+    const op = assertOperator(domainRoot, token);
+    if (op.ok) {
+      return { ok: true, mode: 'operator', operatorId: op.operatorId };
+    }
+    // Holder may expire/revoke own lease (self only).
+    if (auth.callerAgentId && auth.callerAgentId === lease.agentId) {
+      return { ok: true, mode: 'holder' };
+    }
+    return {
+      ok: false,
+      code: CODES.DENY_IDENTITY,
+      reason: 'operator_or_holder_required',
+      next_action: 'Provide operatorToken or callerAgentId matching the lease holder',
+    };
+  }
+
   /**
-   * Sweep leases past expires_at → expired.
+   * Sweep leases past expires_at → expired (system; no operator needed).
    */
   function expireDueLeases() {
     const out = [];
@@ -382,7 +457,8 @@ export function createSwarmCoordinator(opts = {}) {
     for (const [id, rec] of domain.leaseStore.entries()) {
       if (rec.status !== 'active') continue;
       if (rec.expires_at && Date.parse(rec.expires_at) <= t) {
-        out.push(expireLease(id));
+        const r = expireLease(id, { system: true });
+        out.push(r);
       }
     }
     return out;

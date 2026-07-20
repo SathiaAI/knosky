@@ -27,7 +27,10 @@ const subcommand = argv.find(a => !a.startsWith('--'));
 // ---------------------------------------------------------------------------
 if (subcommand === 'agent-register') {
   // Mode B bootstrap: register local agent + mint lease in .knosky domain
+  // Elevated classes / secured domains require --operator-token (or KC_OPERATOR_TOKEN).
+  // First operator: --bootstrap-operator (prints token once).
   const { loadDomain, registerAgentWithLease, resolveDomainRoot } = await import('../core/domain-store.mjs');
+  const { bootstrapOperator } = await import('../core/operator-auth.mjs');
   const getArgVal = (name) => {
     const prefix = name + '=';
     const eq = argv.find(a => a.startsWith(prefix));
@@ -36,12 +39,32 @@ if (subcommand === 'agent-register') {
     if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
     return undefined;
   };
-  const agentId = getArgVal('--agent') || getArgVal('--id') || 'local-agent';
   const domainRoot = resolveDomainRoot(undefined, getArgVal('--domain'));
+  if (flags.has('--bootstrap-operator')) {
+    const boot = bootstrapOperator(domainRoot, { operatorId: getArgVal('--operator-id') || 'bootstrap-operator' });
+    console.log(JSON.stringify({ domain: domainRoot, ...boot }, null, 2));
+    process.exit(boot.ok ? 0 : 1);
+  }
+  const agentId = getArgVal('--agent') || getArgVal('--id') || 'local-agent';
   const domain = loadDomain(domainRoot);
   const classes = (getArgVal('--classes') || 'public,internal').split(',').map(s => s.trim()).filter(Boolean);
-  const out = registerAgentWithLease(domain, { agentId, classes, role: getArgVal('--role') || 'coder' });
-  console.log(JSON.stringify({ ok: true, domain: domainRoot, ...out, hint: 'Pass leaseId to kc_route / kc_policy_check / kc_bundle (Mode B).' }, null, 2));
+  const operatorToken = getArgVal('--operator-token') || process.env.KC_OPERATOR_TOKEN;
+  const out = registerAgentWithLease(
+    domain,
+    { agentId, classes, role: getArgVal('--role') || 'coder' },
+    { operatorToken },
+  );
+  if (!out.ok) {
+    console.error(JSON.stringify({ domain: domainRoot, ...out }, null, 2));
+    process.exit(1);
+  }
+  console.log(JSON.stringify({
+    ok: true,
+    domain: domainRoot,
+    agentId: out.agentId,
+    leaseId: out.leaseId,
+    hint: 'Pass leaseId to kc_route / kc_policy_check / kc_bundle (Mode B). Elevated classes and secured domains need operatorToken.',
+  }, null, 2));
   process.exit(0);
 }
 

@@ -120,7 +120,7 @@ Then ask: *"search KnoSky for what we decided about authentication"* or *"route 
 | **L2** | Governed evaluator | Mode B identity + policy + audit (or safe DENY) |
 | **L3** | Swarm domain | Multi-agent coordinator on Mode B (leases/quotas/…) |
 
-Wave 1 ships L0–L2 paths and **L3 swarm foundation** (coordinator modules + doctor's claim ceiling). Do **not** treat marketing copy as “production swarm-safe at every install” until `doctor` reports `l3_ready` for that domain. Windows kernel lockdown is **unsupported/inactive** until packaging proves otherwise — see [LIMITATIONS.md](./LIMITATIONS.md).
+Wave 1 ships **L0–L2 paths** and an **L3 coordinator foundation** (local modules + `doctor` claim ceiling only — not “L3 ready at every install”). Do **not** treat marketing copy as “production swarm-safe at every install” until `doctor` reports `l3_ready` for that domain. Windows kernel lockdown is **unsupported/inactive** until packaging proves otherwise — see [LIMITATIONS.md](./LIMITATIONS.md).
 
 **Packs (Wave 1)** — same DEC-108 menu: P0 Hermes · Claude Code · Cursor · Codex CLI · P1 VS Code MCP · Greptile recipe · GHA PR-GPS. Audit tools stay off coding packs.
 

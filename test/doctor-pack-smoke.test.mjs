@@ -52,7 +52,8 @@ test('doctor improves MODEB-LEASES after agent-register', () => {
   try {
     const domainRoot = join(dir, '.knosky');
     const d = loadDomain(domainRoot);
-    registerAgentWithLease(d, { agentId: 'doc-agent', classes: ['public', 'internal'] });
+    const reg = registerAgentWithLease(d, { agentId: 'doc-agent', classes: ['public', 'internal'] });
+    assert.equal(reg.ok, true, JSON.stringify(reg));
     const card = buildDoctorScorecard({ domainRoot, repoRoot: REPO });
     const leaseRow = card.rows.find((r) => r.id === 'MODEB-LEASES');
     assert.equal(leaseRow.level, 'ok');

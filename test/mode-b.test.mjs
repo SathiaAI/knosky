@@ -77,10 +77,12 @@ test('Mode B ALLOW with lease + audit receipt', async () => {
     const { load } = await import('../core/retrieve.mjs');
     const ctx = load(cityPath);
     const door = createModeBDoor({ cityCtx: ctx, cityPath, domainRoot, profile: 'coding' });
-    const { leaseId, agentId } = registerAgentWithLease(door.domain, {
+    const reg = registerAgentWithLease(door.domain, {
       agentId: 'agent-alpha',
       classes: ['public', 'internal'],
     });
+    assert.equal(reg.ok, true, JSON.stringify(reg));
+    const { leaseId, agentId } = reg;
     // reload door domain leases from disk
     const door2 = createModeBDoor({ cityCtx: ctx, cityPath, domainRoot, profile: 'coding' });
     const env = door2.handle({
@@ -129,10 +131,12 @@ test('policy_check returns deterministic envelope', async () => {
     const { load } = await import('../core/retrieve.mjs');
     const ctx = load(cityPath);
     const door = createModeBDoor({ cityCtx: ctx, cityPath, domainRoot, profile: 'coding' });
-    const { leaseId, agentId } = registerAgentWithLease(door.domain, {
+    const reg = registerAgentWithLease(door.domain, {
       agentId: 'agent-beta',
       classes: ['public', 'internal'],
     });
+    assert.equal(reg.ok, true, JSON.stringify(reg));
+    const { leaseId, agentId } = reg;
     const door2 = createModeBDoor({ cityCtx: ctx, cityPath, domainRoot, profile: 'coding' });
     const env = door2.handle({ tool: 'policy_check', destination: 'public', leaseId, agentId });
     assert.equal(env.decision_code, CODES.ALLOW);
@@ -147,7 +151,9 @@ test('registerAgentWithLease persists lease store', () => {
   try {
     const domainRoot = join(dir, '.knosky');
     const d = loadDomain(domainRoot);
-    const { leaseId, agentId } = registerAgentWithLease(d, { agentId: 'a1' });
+    const reg = registerAgentWithLease(d, { agentId: 'a1' });
+    assert.equal(reg.ok, true, JSON.stringify(reg));
+    const { leaseId, agentId } = reg;
     const d2 = loadDomain(domainRoot);
     assert.ok(d2.leaseStore.get(leaseId));
     assert.equal(d2.leaseStore.get(leaseId).agentId, agentId);

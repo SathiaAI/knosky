@@ -1,5 +1,6 @@
 // KnoSky Mode B audit receipt writer (DEC-106).
-// Metadata-only hash-chained local ledger file. No file bodies. No network.
+// Metadata-only hash-chained local ledger. No file bodies. No network.
+// Best-effort exclusive seq.lock reduces concurrent multi-agent TOCTOU on ledger_seq.
 
 import {
   appendFileSync,
@@ -8,21 +9,24 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  openSync,
+  closeSync,
+  unlinkSync,
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { readHwm } from './ledger.mjs';
 
 /**
- * @param {string} domainRoot  e.g. path to .knosky
+ * @param {string} domainRoot
  */
 export function auditPaths(domainRoot) {
-  const root = domainRoot;
   return {
-    root,
-    eventsPath: join(root, 'audit', 'events.ndjson'),
-    hwmPath: join(root, 'audit', 'hwm.json'),
-    checkpointPath: join(root, 'audit', 'checkpoint.ndjson'),
+    root: domainRoot,
+    eventsPath: join(domainRoot, 'audit', 'events.ndjson'),
+    hwmPath: join(domainRoot, 'audit', 'hwm.json'),
+    checkpointPath: join(domainRoot, 'audit', 'checkpoint.ndjson'),
+    seqLockPath: join(domainRoot, 'audit', 'seq.lock'),
   };
 }
 
@@ -51,7 +55,6 @@ function lastHash(eventsPath) {
   return null;
 }
 
-/** Atomic HWM write without mandatory fsync (Windows sometimes EPERM on fsync of temp). */
 function writeHwmSoft(hwmPath, seq) {
   if (!Number.isInteger(seq) || seq < 0) {
     throw new TypeError(`ledger_hwm must be a non-negative integer, got: ${JSON.stringify(seq)}`);
@@ -73,10 +76,11 @@ function checkAndAdvanceSoft(seq, hwmPath) {
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
-  if (seq < hwm) {
+  // Must strictly advance past HWM (assigned under lock after append prep).
+  if (seq <= hwm) {
     return {
       ok: false,
-      error: `ledger sequence ${seq} is below the high-water mark ${hwm} — refusing (anti-truncation guard)`,
+      error: `ledger sequence ${seq} must be > high-water mark ${hwm}`,
     };
   }
   try {
@@ -88,14 +92,66 @@ function checkAndAdvanceSoft(seq, hwmPath) {
 }
 
 /**
+ * Exclusive lock via O_EXCL create of seq.lock.
+ * @returns {{ ok:true, release:()=>void } | { ok:false, reason:string }}
+ */
+function acquireSeqLock(lockPath, { tries = 50, delayMs = 8 } = {}) {
+  mkdirSync(dirname(lockPath), { recursive: true });
+  for (let i = 0; i < tries; i++) {
+    try {
+      const fd = openSync(lockPath, 'wx');
+      return {
+        ok: true,
+        release() {
+          try {
+            closeSync(fd);
+          } catch {
+            /* ignore */
+          }
+          try {
+            unlinkSync(lockPath);
+          } catch {
+            /* ignore */
+          }
+        },
+      };
+    } catch (err) {
+      if (err && (err.code === 'EEXIST' || err.code === 'EPERM')) {
+        const end = Date.now() + delayMs;
+        while (Date.now() < end) {
+          /* brief backoff */
+        }
+        continue;
+      }
+      return { ok: false, reason: err && err.message ? err.message : String(err) };
+    }
+  }
+  return { ok: false, reason: 'seq_lock_timeout' };
+}
+
+function sanitizeMeta(meta) {
+  if (!meta || typeof meta !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(meta)) {
+    if (typeof k !== 'string' || k.length > 80) continue;
+    if (v == null) continue;
+    if (typeof v === 'string') out[k] = v.slice(0, 200);
+    else if (typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+    else if (Array.isArray(v)) out[k] = v.slice(0, 20).map((x) => String(x).slice(0, 80));
+  }
+  return out;
+}
+
+/**
  * Append a route/swarm decision event and return a receipt.
- * Fail-closed on I/O / HWM errors.
+ * Fail-closed on I/O / HWM / lock errors.
  *
  * @param {object} opts
  * @returns {{ ok:true, receipt_id:string, ledger_seq:number, event_hash:string }
  *          |{ ok:false, reason:string }}
  */
 export function writeDecisionReceipt(opts = {}) {
+  let lock = null;
   try {
     const {
       domainRoot,
@@ -117,20 +173,25 @@ export function writeDecisionReceipt(opts = {}) {
     const paths = auditPaths(domainRoot);
     mkdirSync(dirname(paths.eventsPath), { recursive: true });
 
-    const prev = lastHash(paths.eventsPath);
-    let seq = 1;
-    if (existsSync(paths.eventsPath)) {
-      const t = readFileSync(paths.eventsPath, 'utf8');
-      seq = t.split(/\r?\n/).filter(Boolean).length + 1;
+    lock = acquireSeqLock(paths.seqLockPath);
+    if (!lock.ok) {
+      return { ok: false, reason: `seq_lock: ${lock.reason}` };
     }
 
-    const adv = checkAndAdvanceSoft(seq, paths.hwmPath);
-    if (!adv.ok) {
-      return {
-        ok: false,
-        reason: `hwm_or_checkpoint: ${adv.error || 'refused'}`,
-      };
+    // Under lock: seq = max(lineCount, hwm) + 1, then append, then HWM.
+    const prev = lastHash(paths.eventsPath);
+    let lineCount = 0;
+    if (existsSync(paths.eventsPath)) {
+      const t = readFileSync(paths.eventsPath, 'utf8');
+      lineCount = t.split(/\r?\n/).filter(Boolean).length;
     }
+    let hwm = 0;
+    try {
+      hwm = readHwm(paths.hwmPath);
+    } catch (err) {
+      return { ok: false, reason: `hwm_read: ${err.message || err}` };
+    }
+    const seq = Math.max(lineCount, hwm) + 1;
 
     const receipt_id = `rcpt_${randomUUID().replace(/-/g, '').slice(0, 24)}`;
     const body = {
@@ -150,7 +211,17 @@ export function writeDecisionReceipt(opts = {}) {
     const event_hash = hashLine(prev, body);
     body.event_hash = event_hash;
 
+    // Append first so crash after HWM can't "orphan" a seq with Vorgang no event
+    // (if crash after append before HWM, next max(line,hwm)+1 still advances cleanly)
     appendFileSync(paths.eventsPath, JSON.stringify(body) + '\n', 'utf8');
+
+    const adv = checkAndAdvanceSoft(seq, paths.hwmPath);
+    if (!adv.ok) {
+      return {
+        ok: false,
+        reason: `hwm_or_checkpoint: ${adv.error || 'refused'}`,
+      };
+    }
 
     return { ok: true, receipt_id, ledger_seq: seq, event_hash };
   } catch (err) {
@@ -158,24 +229,15 @@ export function writeDecisionReceipt(opts = {}) {
       ok: false,
       reason: err && err.message ? err.message : String(err),
     };
+  } finally {
+    if (lock && lock.ok && typeof lock.release === 'function') {
+      lock.release();
+    }
   }
-}
-
-function sanitizeMeta(meta) {
-  if (!meta || typeof meta !== 'object') return {};
-  const out = {};
-  for (const [k, v] of Object.entries(meta)) {
-    if (typeof k !== 'string' || k.length > 80) continue;
-    if (v == null) continue;
-    if (typeof v === 'string') out[k] = v.slice(0, 200);
-    else if (typeof v === 'number' || typeof v === 'boolean') out[k] = v;
-    else if (Array.isArray(v)) out[k] = v.slice(0, 20).map((x) => String(x).slice(0, 80));
-  }
-  return out;
 }
 
 /**
- * Verify the hash chain of the events file.
+ * Verify hash chain + contiguous ledger_seq.
  * @param {string} domainRoot
  */
 export function verifyAuditChain(domainRoot) {
@@ -200,7 +262,6 @@ export function verifyAuditChain(domainRoot) {
     if (i > 0 && body.prev_hash !== prev) {
       return { ok: false, at: i, reason: 'prev_hash_break', receipt_id: row.receipt_id };
     }
-    // Monotone contiguous ledger_seq (when present)
     if (Number.isInteger(row.ledger_seq)) {
       if (i === 0) {
         if (row.ledger_seq < 1) {
@@ -224,7 +285,6 @@ export function verifyAuditChain(domainRoot) {
 }
 
 /**
- * Query recent audit events (security profile). Metadata only.
  * @param {string} domainRoot
  * @param {{ limit?: number, agent_id?: string }} [opts]
  */

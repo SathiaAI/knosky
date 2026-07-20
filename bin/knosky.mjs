@@ -26,9 +26,9 @@ const subcommand = argv.find(a => !a.startsWith('--'));
 // before `target` is ever read. Reordered so that stays true by construction.
 // ---------------------------------------------------------------------------
 if (subcommand === 'agent-register') {
-  // Mode B bootstrap: register local agent + mint lease in .knosky domain
+  // Mode B: register local agent + mint lease in .knosky domain.
   // Elevated classes / secured domains require --operator-token (or KC_OPERATOR_TOKEN).
-  // First operator: --bootstrap-operator (prints token once).
+  // First operators: --bootstrap-operator (default dual tokens; optional --allow-single-operator).
   const { loadDomain, registerAgentWithLease, resolveDomainRoot } = await import('../core/domain-store.mjs');
   const { bootstrapOperator } = await import('../core/operator-auth.mjs');
   const getArgVal = (name) => {
@@ -41,13 +41,29 @@ if (subcommand === 'agent-register') {
   };
   const domainRoot = resolveDomainRoot(undefined, getArgVal('--domain'));
   if (flags.has('--bootstrap-operator')) {
-    const boot = bootstrapOperator(domainRoot, { operatorId: getArgVal('--operator-id') || 'bootstrap-operator' });
-    console.log(JSON.stringify({ domain: domainRoot, ...boot }, null, 2));
+    const boot = bootstrapOperator(domainRoot, {
+      operatorId: getArgVal('--operator-id') || 'operator-a',
+      operatorId2: getArgVal('--operator-id-2') || 'operator-b',
+      allowSingleOperator: flags.has('--allow-single-operator'),
+    });
+    console.log(JSON.stringify({
+      domain: domainRoot,
+      ok: boot.ok,
+      mode: boot.mode,
+      reason: boot.reason,
+      operatorId: boot.operatorId,
+      operatorToken: boot.operatorToken,
+      operatorId2: boot.operatorId2,
+      operatorToken2: boot.operatorToken2,
+      operators: boot.operators,
+      warning: boot.warning,
+    }, null, 2));
     process.exit(boot.ok ? 0 : 1);
   }
   const agentId = getArgVal('--agent') || getArgVal('--id') || 'local-agent';
   const domain = loadDomain(domainRoot);
   const classes = (getArgVal('--classes') || 'public,internal').split(',').map(s => s.trim()).filter(Boolean);
+  // Flag name is plain CLI text. Token value comes from argv or env only (never hardcoded).
   const operatorToken = getArgVal('--operator-token') || process.env.KC_OPERATOR_TOKEN;
   const out = registerAgentWithLease(
     domain,

@@ -206,6 +206,8 @@ export function createModeBDoor(opts) {
       let raw = null;
       let destination = req.destination || null;
       let className = DEFAULT_CLASS;
+      /** @type {string[]} */
+      let bundleNodeIds = Array.isArray(req.nodeIds) ? req.nodeIds.map(String) : [];
 
       if (tool === 'route' || tool === 'policy_check') {
         if (!req.destination || typeof req.destination !== 'string') {
@@ -216,12 +218,9 @@ export function createModeBDoor(opts) {
         });
         className = inferRouteClass(cityCtx, raw);
       } else if (tool === 'bundle') {
-        const ids = Array.isArray(req.nodeIds) ? req.nodeIds : [];
-        if (!ids.length && req.destination) {
-          const r = kcRoute(cityCtx, String(req.destination).slice(0, 400), { limit: 8 });
-          raw = r;
-          const idsFromRoute = (r.route || []).map((e) => e.id).filter(Boolean);
-          req = { ...req, nodeIds: idsFromRoute };
+        if (!bundleNodeIds.length && req.destination) {
+          raw = kcRoute(cityCtx, String(req.destination).slice(0, 400), { limit: 8 });
+          bundleNodeIds = (raw.route || []).map((e) => e.id).filter(Boolean);
         }
         className = raw ? inferRouteClass(cityCtx, raw) : DEFAULT_CLASS;
       } else {
@@ -282,7 +281,7 @@ export function createModeBDoor(opts) {
       }
 
       if (tool === 'bundle') {
-        const ids = Array.isArray(req.nodeIds) ? req.nodeIds : [];
+        const ids = bundleNodeIds;
         if (!ids.length) {
           return envelope({ code: CODES.ERROR_INVALID_INPUT, mode: 'B', request_id, receipt_id: rc.receipt_id });
         }

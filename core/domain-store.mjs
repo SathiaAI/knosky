@@ -167,9 +167,11 @@ export function registerAgentWithLease(domain, agent, opts = {}) {
   const requested = Array.isArray(agent.classes) ? agent.classes.map(String) : ['public', 'internal'];
   const elevatedWanted = requested.some((c) => ELEVATED.includes(c));
   const secured = operatorCount(domain.domainRoot) > 0;
+  const token = opts.operatorToken || process.env.KC_OPERATOR_TOKEN;
+  let operatorOk = false;
 
   if (elevatedWanted || secured) {
-    const auth = assertOperator(domain.domainRoot, opts.operatorToken || process.env.KC_OPERATOR_TOKEN);
+    const auth = assertOperator(domain.domainRoot, token);
     if (!auth.ok) {
       return {
         ok: false,
@@ -179,9 +181,10 @@ export function registerAgentWithLease(domain, agent, opts = {}) {
           : `Operator auth failed: ${auth.reason}`,
       };
     }
+    operatorOk = true;
   }
 
-  const allowElevated = elevatedWanted && assertOperator(domain.domainRoot, opts.operatorToken || process.env.KC_OPERATOR_TOKEN).ok;
+  const allowElevated = elevatedWanted && operatorOk;
   const classes = sanitizeClasses(requested, { allowElevated });
   if (elevatedWanted && !allowElevated) {
     return {

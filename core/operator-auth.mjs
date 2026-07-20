@@ -1,6 +1,8 @@
 // Operator authorization for trust-domain security-critical mutations (DEC-106/109).
-// Local-only: operator tokens live under .knosky/operators.json (hashed at rest).
-// Fail-closed: policy write / privileged register / foreign revoke require operator.
+// Local-only: operator tokens under .knosky/operators.json (SHA-256 hashes at rest).
+// Fail-closed. Bootstrap prefers dual-operator mint; single-operator only with
+// explicit --allow-single-operator. Operator revoke needs a DIFFERENT operator
+// (no unilateral self-revocation of operator status).
 
 import {
   existsSync,
@@ -13,8 +15,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 
 const OPS_FILE = 'operators.json';
-const DEFAULT_SOLO_CLASSES = Object.freeze(['public', 'internal']);
-const ELEVATED = Object.freeze(['restricted', 'confidential']);
+export const DEFAULT_SOLO_CLASSES = Object.freeze(['public', 'internal']);
+export const ELEVATED = Object.freeze(['restricted', 'confidential']);
 
 function atomicWriteSoft(path, obj) {
   mkdirSync(dirname(path), { recursive: true });
@@ -36,7 +38,6 @@ export function mintOperatorToken() {
 }
 
 /**
- * Load operators doc (empty if missing).
  * @param {string} domainRoot
  */
 export function loadOperators(domainRoot) {
@@ -66,40 +67,75 @@ function saveOperators(domainRoot, doc) {
 }
 
 export function operatorCount(domainRoot) {
-  return Object.keys(loadOperators(domainRoot).operators || {}).length;
+  const ops = loadOperators(domainRoot).operators || {};
+  return Object.values(ops).filter((o) => o && !o.revoked).length;
 }
 
-/**
- * Bootstrap the first operator when none exist.
- * @returns {{ ok:true, operatorId:string, operatorToken:string }
- *          |{ ok:false, reason:string }}
- */
-export function bootstrapOperator(domainRoot, { operatorId = 'bootstrap-operator' } = {}) {
-  mkdirSync(domainRoot, { recursive: true });
-  const doc = loadOperators(domainRoot);
-  if (Object.keys(doc.operators).length > 0) {
-    return { ok: false, reason: 'operators_already_exist' };
-  }
+function addOperatorRecord(doc, operatorId) {
   const token = mintOperatorToken();
-  const id = operatorId || 'bootstrap-operator';
+  const id = operatorId || `operator-${Object.keys(doc.operators).length + 1}`;
+  if (doc.operators[id] && !doc.operators[id].revoked) {
+    return { ok: false, reason: 'operator_id_exists' };
+  }
   doc.operators[id] = {
     id,
     role: 'operator',
     token_hash: hashOperatorToken(token),
     created_at: new Date().toISOString(),
   };
-  doc.bootstrap_complete = true;
-  saveOperators(domainRoot, doc);
-  return {
-    ok: true,
-    operatorId: id,
-    operatorToken: token,
-    warning: 'Store operatorToken offline. It is shown once and only a hash is retained.',
-  };
+  return { ok: true, operatorId: id, operatorToken: token };
 }
 
 /**
- * Verify operator token against domain.
+ * Bootstrap operators when none exist.
+ * Default = dual operator (2 tokens) so no single local process is sole trust root
+ * without a second material secret. Single-operator requires allowSingleOperator.
+ *
+ * @param {string} domainRoot
+ * @param {{ operatorId?: string, operatorId2?: string, allowSingleOperator?: boolean }} [opts]
+ */
+export function bootstrapOperator(domainRoot, opts = {}) {
+  mkdirSync(domainRoot, { recursive: true });
+  const doc = loadOperators(domainRoot);
+  if (Object.values(doc.operators || {}).some((o) => o && !o.revoked)) {
+    return { ok: false, reason: 'operators_already_exist' };
+  }
+
+  const dual = opts.allowSingleOperator !== true;
+  const a = addOperatorRecord(doc, opts.operatorId || 'operator-a');
+  if (!a.ok) return a;
+
+  /** @type {any} */
+  const out = {
+    ok: true,
+    mode: dual ? 'dual' : 'single',
+    operators: [{ operatorId: a.operatorId, operatorToken: a.operatorToken }],
+    warning:
+      'Store operator token(s) offline. Shown once; only hashes retained on disk. Losing all tokens locks admin actions.',
+  };
+
+  if (dual) {
+    const b = addOperatorRecord(doc, opts.operatorId2 || 'operator-b');
+    if (!b.ok) return b;
+    out.operators.push({ operatorId: b.operatorId, operatorToken: b.operatorToken });
+    // Back-compat fields: first token still exposed at top level for simple CLIs
+    out.operatorId = a.operatorId;
+    out.operatorToken = a.operatorToken;
+    out.operatorId2 = b.operatorId;
+    out.operatorToken2 = b.operatorToken;
+  } else {
+    out.operatorId = a.operatorId;
+    out.operatorToken = a.operatorToken;
+    out.warning +=
+      ' Single-operator mode enabled via --allow-single-operator (weaker Bootstrap).';
+  }
+
+  doc.bootstrap_complete = true;
+  saveOperators(domainRoot, doc);
+  return out;
+}
+
+/**
  * @returns {{ ok:true, operatorId:string } | { ok:false, reason:string }}
  */
 export function assertOperator(domainRoot, operatorToken) {
@@ -118,8 +154,47 @@ export function assertOperator(domainRoot, operatorToken) {
 }
 
 /**
- * Classes allowed without elevated operator grant.
+ * Revoke an operator. Caller must be a DIFFERENT active operator (Rule 3:
+ * no unilateral self-revocation of operator status). Last operator cannot be revoked.
+ *
+ * @param {string} domainRoot
+ * @param {{ targetOperatorId: string, callerOperatorToken: string }} opts
  */
+export function revokeOperator(domainRoot, opts = {}) {
+  const caller = assertOperator(domainRoot, opts.callerOperatorToken);
+  if (!caller.ok) return { ok: false, reason: caller.reason };
+
+  const targetId = opts.targetOperatorId;
+  if (!targetId || typeof targetId !== 'string') {
+    return { ok: false, reason: 'targetOperatorId_required' };
+  }
+  if (caller.operatorId === targetId) {
+    return {
+      ok: false,
+      reason: 'cannot_self_revoke_operator',
+      next_action: 'A second active operator must revoke this operator',
+    };
+  }
+
+  const doc = loadOperators(domainRoot);
+  const target = doc.operators[targetId];
+  if (!target || target.revoked) {
+    return { ok: false, reason: 'target_not_found_or_already_revoked' };
+  }
+
+  const active = Object.values(doc.operators).filter((o) => o && !o.revoked);
+  if (active.length <= 1) {
+    return { ok: false, reason: 'cannot_revoke_last_operator' };
+  }
+
+  target.revoked = true;
+  target.revoked_at = new Date().toISOString();
+  target.revoked_by = caller.operatorId;
+  doc.operators[targetId] = target;
+  saveOperators(domainRoot, doc);
+  return { ok: true, targetOperatorId: targetId, revoked_by: caller.operatorId };
+}
+
 export function sanitizeClasses(classes, { allowElevated = false } = {}) {
   const raw = Array.isArray(classes) ? classes.map(String) : DEFAULT_SOLO_CLASSES.slice();
   const out = [];
@@ -135,14 +210,8 @@ export function sanitizeClasses(classes, { allowElevated = false } = {}) {
 }
 
 /**
- * Authorize a security-critical mutation.
- * Modes:
- *  - bootstrap: no operators yet + explicit bootstrap flag → mint operator path must be separate
- *  - operator: valid operator token
- *  - self_revoke: holder may revoke own lease only (caller checks match)
- *
  * @param {string} domainRoot
- * @param {{ operatorToken?: string, action: string }} opts
+ * @param {{ operatorToken?: string, action?: string, allowEmptyBootstrap?: boolean }} opts
  */
 export function authorizeMutation(domainRoot, opts = {}) {
   const action = opts.action || 'mutate';
@@ -150,7 +219,6 @@ export function authorizeMutation(domainRoot, opts = {}) {
   if (auth.ok) {
     return { ok: true, mode: 'operator', operatorId: auth.operatorId, action };
   }
-  // Allow first-run register ONLY when no operators and bootstrap requested at higher layer
   if (opts.allowEmptyBootstrap && operatorCount(domainRoot) === 0 && action === 'bootstrap_context') {
     return { ok: true, mode: 'bootstrap_pending', action };
   }
@@ -160,9 +228,7 @@ export function authorizeMutation(domainRoot, opts = {}) {
     action,
     next_action:
       operatorCount(domainRoot) === 0
-        ? 'Run: knosky agent-register --bootstrap-operator  (save the printed operatorToken)'
+        ? 'Run: knosky agent-register --bootstrap-operator  (saves two operator tokens by default)'
         : 'Pass operatorToken (KC_OPERATOR_TOKEN or --operator-token) for policy/lease admin actions',
   };
 }
-
-export { DEFAULT_SOLO_CLASSES, ELEVATED };

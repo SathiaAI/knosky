@@ -36,14 +36,17 @@ test('elevated classes require operator; confidential blocked without token', ()
   }
 });
 
-test('after bootstrap operator, registration requires token; with token elevated OK', () => {
+test('after dual bootstrap operator, registration requires token; with token elevated OK', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ks-op2-'));
   try {
     const domainRoot = join(dir, '.knosky');
     const boot = bootstrapOperator(domainRoot);
     assert.equal(boot.ok, true);
+    assert.equal(boot.mode, 'dual');
     assert.ok(boot.operatorToken);
+    assert.ok(boot.operatorToken2);
     assert.equal(assertOperator(domainRoot, boot.operatorToken).ok, true);
+    assert.equal(assertOperator(domainRoot, boot.operatorToken2).ok, true);
 
     const d = loadDomain(domainRoot);
     const noTok = registerAgentWithLease(d, {
@@ -63,6 +66,30 @@ test('after bootstrap operator, registration requires token; with token elevated
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('operator cannot self-revoke; second operator can revoke first', async () => {
+  const { revokeOperator } = await import('../core/operator-auth.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'ks-op5-'));
+  try {
+    const domainRoot = join(dir, '.knosky');
+    const boot = bootstrapOperator(domainRoot);
+    assert.equal(boot.ok, true);
+    const self = revokeOperator(domainRoot, {
+      targetOperatorId: boot.operatorId,
+      callerOperatorToken: boot.operatorToken,
+    });
+    assert.equal(self.ok, false);
+    assert.equal(self.reason, 'cannot_self_revoke_operator');
+    const cross = revokeOperator(domainRoot, {
+      targetOperatorId: boot.operatorId,
+      callerOperatorToken: boot.operatorToken2,
+    });
+    assert.equal(cross.ok, true, JSON.stringify(cross));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 test('foreign lease revoke denied without operator; holder self-revoke allowed', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ks-op3-'));

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "knosky": {
+      "command": "node",
+      "args": ["/ABS/PATH/TO/knosky/mcp/server.mjs"],
+      "env": {
+        "KC_CITY": "/ABS/PATH/TO/city-data.json",
+        "KC_PROFILE": "coding"
+      }
+    }
+  }
+}

@@ -58,21 +58,71 @@ Open `city.html`. Every top-level folder is a **district**, every file a **build
 
 **Flags:** `--share-safe` strips your absolute path (basename only) and prints a safety report — and the build **fails closed** if a secret-like value is detected. `--redact AcmeCorp,SecretProject` masks (and skips files matching) project-specific terms. `--include-absolute-root` keeps the full local path (private diagnostics only). `--allow-leaks` overrides the secret block (not recommended).
 
-**2. Connect it to your AI assistant (MCP)**
+**2. Connect it to your AI assistant (MCP)** — DEC-108 menu
+
+SSOT: [`ssot/tool-menu.json`](./ssot/tool-menu.json) · decision codes: [`ssot/decision-codes.json`](./ssot/decision-codes.json) · ladder: [`ssot/ladder-l0-l3.md`](./ssot/ladder-l0-l3.md). README = wiki = binary for tool names (AR-03).
+
 ```bash
 cd mcp && npm install && cd ..
-# Claude Code:
-claude mcp add knosky -e KC_CITY=/abs/path/city-data.json -- node /abs/path/mcp/server.mjs
+# Claude Code (coding profile — default packs):
+claude mcp add knosky -e KC_CITY=/abs/path/city-data.json -e KC_PROFILE=coding -- node /abs/path/mcp/server.mjs
 ```
-Or add to your Claude Desktop / Cursor / VS Code MCP config:
+Or add to your Claude Desktop / Cursor / VS Code / Codex MCP config:
 ```json
 "knosky": {
   "command": "node",
   "args": ["/abs/path/mcp/server.mjs"],
-  "env": { "KC_CITY": "/abs/path/city-data.json" }
+  "env": {
+    "KC_CITY": "/abs/path/city-data.json",
+    "KC_PROFILE": "coding"
+  }
 }
 ```
-Then ask: *"search KnoSky for what we decided about authentication."* Read-only tools exposed: `kc_search`, `kc_get_node`, `kc_list_categories`, `kc_get_provenance`, `kc_related`.
+
+| Profile (`KC_PROFILE`) | What it is for | Tools |
+| :--- | :--- | :--- |
+| **coding** (default packs) | Hermes, Claude Code, Cursor, Codex CLI, VS Code | Tier 0 map + Tier 1 governed |
+| **security** | Operators / CI verify | Coding tools + `kc_audit_query`, `kc_audit_verify` |
+| **advisory** | Explicit non-authorizing explore | Tier 0 map (+ labeled Mode A `kc_route`) |
+
+**Mode A vs Mode B (DEC-106 / DEC-108)**
+
+| Mode | Label on the wire | Meaning |
+| :--- | :--- | :--- |
+| **Mode A** | `ADVISORY_UNAUTH` | Non-authorizing map / tips. Not policy-certified, not swarm-safe. |
+| **Mode B** | `ALLOW` or `DENY_*` (+ receipt on ALLOW) | Governed: identity + policy + audit before any authorized claim. |
+
+Default coding profile uses **Mode B** for governed tools. Mode A is available via `KC_PROFILE=advisory` or `advisory=true` on dual-mode `kc_route` — always labeled; never market it as governed.
+
+**Official tool menu (freeze)**
+
+| Tier | Tools | Authorizing? |
+| :--- | :--- | :---: |
+| **Tier 0 map** | `kc_search`, `kc_get_node`, `kc_list_categories`, `kc_get_provenance`, `kc_related` | No (map only) |
+| **Tier 1 governed** | `kc_route` (**dual-mode**), `kc_bundle`, `kc_policy_check` | Yes when Mode B `ALLOW` |
+| **Security profile only** | `kc_audit_query`, `kc_audit_verify` | Audit verify — not on coding packs |
+
+- **`kc_route`** — GPS toward a destination. Mode B: `ALLOW` / `DENY_*` with audit receipt; Mode A: labeled `ADVISORY_UNAUTH` tips only.
+- **`kc_bundle`** — Share-oriented pointer / intent-manifest under the same gates + fail-closed secret scan.
+- **`kc_policy_check`** — Dry-run policy decision + reasons without preferring a full route body.
+
+**Closed decision codes** (no open strings on the wire):  
+`ALLOW` · `DENY` · `DENY_IDENTITY` · `DENY_POLICY` · `DENY_AUDIT` · `DENY_FRESHNESS` · `DENY_EVIDENCE` · `ERROR_INVALID_INPUT` · `ERROR_INDEX` · `ADVISORY_UNAUTH`
+
+Then ask: *"search KnoSky for what we decided about authentication"* or *"route me to the auth policy under Mode B."*
+
+**Guarantee ladder (honest claims — DEC-110)** — never claim higher than `knosky doctor` for this install:
+
+| L | Name | Promise |
+| :---: | :--- | :--- |
+| **L0** | Local map | Index + navigate locally; no KnoSky upload by default |
+| **L1** | Share-safe | Fail-closed secret controls before share artifacts |
+| **L2** | Governed evaluator | Mode B identity + policy + audit (or safe DENY) |
+| **L3** | Swarm domain | Multi-agent coordinator on Mode B (leases/quotas/…) |
+
+Wave 1 ships L0–L2 paths and **L3 swarm foundation** (coordinator modules + doctor's claim ceiling). Do **not** treat marketing copy as “production swarm-safe at every install” until `doctor` reports `l3_ready` for that domain. Windows kernel lockdown is **unsupported/inactive** until packaging proves otherwise — see [LIMITATIONS.md](./LIMITATIONS.md).
+
+**Packs (Wave 1)** — same DEC-108 menu: P0 Hermes · Claude Code · Cursor · Codex CLI · P1 VS Code MCP · Greptile recipe · GHA PR-GPS. Audit tools stay off coding packs.
 
 **See how your code connects.** Select a file in the city to see its **connections** (roads to the files it imports / that import it) and **churn** (recently-changed files glow). Or ask your assistant *"what connects to src/auth.js?"* — file-level structure only, not code analysis.
 

@@ -1,0 +1,130 @@
+{
+  "$schema_comment": "KnoSky DEC-108 tool menu SSOT — Wave 1 freeze. README = wiki = site = binary must match.",
+  "id": "knosky-tool-menu",
+  "version": "1.0.0",
+  "status": "draft-freeze",
+  "dec": "DEC-108",
+  "last_updated": "2026-07-19",
+  "profiles": {
+    "coding": {
+      "description": "Default agent packs (Hermes, Claude Code, Cursor, Codex CLI, VS Code MCP). No audit ledger tools.",
+      "includes_tiers": ["tier0_map", "tier1_governed"]
+    },
+    "security": {
+      "description": "Operator / security / CI verify profile. Includes coding tools plus audit tools.",
+      "includes_tiers": ["tier0_map", "tier1_governed", "security_audit"]
+    },
+    "advisory": {
+      "description": "Explicit non-authorizing exploration. Mode A labels required. Must not be marketed as governed.",
+      "includes_tiers": ["tier0_map"],
+      "allows_mode_a_route": true
+    }
+  },
+  "tiers": {
+    "tier0_map": {
+      "name": "Tier 0 map",
+      "authorizing": false,
+      "label_when_no_policy": "non-authorizing map",
+      "tools": [
+        {
+          "name": "kc_search",
+          "summary": "Search map nodes by text/metadata over the city index.",
+          "mode_default": "A",
+          "profiles": ["coding", "security", "advisory"]
+        },
+        {
+          "name": "kc_get_node",
+          "summary": "Fetch a single node projection by id.",
+          "mode_default": "A",
+          "profiles": ["coding", "security", "advisory"]
+        },
+        {
+          "name": "kc_list_categories",
+          "summary": "List category/district manifest entries.",
+          "mode_default": "A",
+          "profiles": ["coding", "security", "advisory"]
+        },
+        {
+          "name": "kc_get_provenance",
+          "summary": "Return provenance pointers for a node (live SoT refs).",
+          "mode_default": "A",
+          "profiles": ["coding", "security", "advisory"]
+        },
+        {
+          "name": "kc_related",
+          "summary": "Related nodes via map edges (tests/docs/neighbors).",
+          "mode_default": "A",
+          "profiles": ["coding", "security", "advisory"]
+        }
+      ]
+    },
+    "tier1_governed": {
+      "name": "Tier 1 governed",
+      "authorizing": true,
+      "requires_mode_b_for_allow": true,
+      "tools": [
+        {
+          "name": "kc_route",
+          "summary": "Route GPS toward a destination. Dual-mode: Mode B ALLOW/DENY_* with receipt, or labeled Mode A ADVISORY_UNAUTH.",
+          "mode_default": "B",
+          "dual_mode": true,
+          "profiles": ["coding", "security"],
+          "advisory_profile": "advisory",
+          "decision_codes_used": true
+        },
+        {
+          "name": "kc_bundle",
+          "summary": "Build share-oriented intent-manifest/bundle under same gates + fail-closed secret scan.",
+          "mode_default": "B",
+          "profiles": ["coding", "security"],
+          "decision_codes_used": true
+        },
+        {
+          "name": "kc_policy_check",
+          "summary": "Dry-run policy decision + reasons without full route body.",
+          "mode_default": "B",
+          "profiles": ["coding", "security"],
+          "decision_codes_used": true
+        }
+      ]
+    },
+    "security_audit": {
+      "name": "Security profile only",
+      "authorizing": false,
+      "profiles_only": ["security"],
+      "tools": [
+        {
+          "name": "kc_audit_query",
+          "summary": "Query local route/swarm decision audit events (metadata-only).",
+          "mode_default": "B",
+          "profiles": ["security"],
+          "forbidden_profiles": ["coding", "advisory"]
+        },
+        {
+          "name": "kc_audit_verify",
+          "summary": "Verify audit chain / receipt integrity.",
+          "mode_default": "B",
+          "profiles": ["security"],
+          "forbidden_profiles": ["coding", "advisory"]
+        }
+      ]
+    }
+  },
+  "pack_matrix": {
+    "P0": ["hermes", "claude-code", "cursor", "codex-cli"],
+    "P1": ["vscode-mcp", "greptile-recipe", "gha-pr-gps"],
+    "default_profile_for_packs": "coding",
+    "must_not_include_on_coding_packs": ["kc_audit_query", "kc_audit_verify"]
+  },
+  "release_gates": [
+    "AR-03: README tool list == wiki tool list == knosky.com protocol summary == this file == mcp registerTool names",
+    "Mode A tools/responses must carry ADVISORY_UNAUTH when non-governed",
+    "Mode B ALLOW requires identity + policy + audit receipt",
+    "Decision codes closed set from decision-codes.json"
+  ],
+  "non_goals": [
+    "Multi-tenant SaaS tool surface",
+    "Audit tools on default coding packs",
+    "Wave 2 native app exclusive tools as W1 dependencies"
+  ]
+}

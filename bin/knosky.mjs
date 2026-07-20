@@ -25,12 +25,66 @@ const subcommand = argv.find(a => !a.startsWith('--'));
 // 'doctor' as a filesystem path -- harmless only because this branch exits
 // before `target` is ever read. Reordered so that stays true by construction.
 // ---------------------------------------------------------------------------
+if (subcommand === 'agent-register') {
+  // Mode B bootstrap: register local agent + mint lease in .knosky domain
+  const { loadDomain, registerAgentWithLease, resolveDomainRoot } = await import('../core/domain-store.mjs');
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
+    return undefined;
+  };
+  const agentId = getArgVal('--agent') || getArgVal('--id') || 'local-agent';
+  const domainRoot = resolveDomainRoot(undefined, getArgVal('--domain'));
+  const domain = loadDomain(domainRoot);
+  const classes = (getArgVal('--classes') || 'public,internal').split(',').map(s => s.trim()).filter(Boolean);
+  const out = registerAgentWithLease(domain, { agentId, classes, role: getArgVal('--role') || 'coder' });
+  console.log(JSON.stringify({ ok: true, domain: domainRoot, ...out, hint: 'Pass leaseId to kc_route / kc_policy_check / kc_bundle (Mode B).' }, null, 2));
+  process.exit(0);
+}
+
 if (subcommand === 'doctor') {
   const { doctorLines } = await import('../core/net-lockdown.mjs');
   console.log('\nKnoSky doctor — sandbox + security status\n');
   for (const line of doctorLines()) console.log(line);
   console.log('');
   process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// swarm subcommand: L3 operator heatmap / status (DEC-113 thin floor)
+//   knosky swarm status [--domain <path>]
+// ---------------------------------------------------------------------------
+if (subcommand === 'swarm') {
+  const { readSwarmHeatmap, createSwarmCoordinator } = await import('../core/swarm-coordinator.mjs');
+  const { resolveDomainRoot } = await import('../core/domain-store.mjs');
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
+    return undefined;
+  };
+  const action = argv.find((a, i) => i > 0 && !a.startsWith('--') && a !== 'swarm') || 'status';
+  const domainRoot = resolveDomainRoot(getArgVal('--city'), getArgVal('--domain'));
+
+  if (action === 'status') {
+    let out = readSwarmHeatmap(domainRoot);
+    if (!out.ok) {
+      // Build a live snapshot so status is useful before any swarm traffic.
+      const coord = createSwarmCoordinator({ domainRoot });
+      const wr = coord.writeHeatmap();
+      out = { ok: true, path: wr.path, domainRoot, heatmap: wr.snapshot, note: 'fresh_snapshot' };
+    }
+    console.log(JSON.stringify(out, null, 2));
+    process.exit(out.ok ? 0 : 1);
+  }
+
+  console.error('KnoSky swarm: unknown action "' + action + '". Try: knosky swarm status');
+  process.exit(2);
 }
 
 // ---------------------------------------------------------------------------

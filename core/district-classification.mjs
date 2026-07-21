@@ -103,7 +103,8 @@ export function validateClass(cls) {
  */
 export function loadClass(node) {
   if (node !== null && typeof node === 'object') {
-    const cls = node.district_class;
+    // Preferred field: district_class. Accept short alias `classification` used by some indexes.
+    const cls = node.district_class ?? node.classification;
     if (isValidClass(cls)) return cls;
   }
   return DEFAULT_CLASS;

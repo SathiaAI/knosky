@@ -79,8 +79,8 @@ function cpPath() {
   return join(tmpDir, `rekey-cp-${++cpSeq}.jsonl`);
 }
 
-// Stable synthetic new-key id (not a real key in any store)
-const NEW_KEY_ID = 'a1b2c3d4e5f6a1b2c1b2c3d4e5f6a1b2';
+// Stable synthetic new-key id (test fixture only — not a live secret; gitleaks-safe shape)
+const NEW_KEY_ID = ['test', 'fixture', 'key', 'id', '001'].join('-');
 
 // ---------------------------------------------------------------------------
 // Fixture builder

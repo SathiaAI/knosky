@@ -1,25 +1,26 @@
 {
   "name": "knosky",
-  "version": "0.6.3",
-  "description": "Turn any repo or docs folder into an explorable city, plus a local MCP that grounds your AI in your own source with citations. Local-first, free, $0 tokens.",
+  "version": "0.7.0-modeb.0",
+  "description": "Local-first agentic GPS for repos: map + Mode B governed MCP routes (identity, policy, audit). Free protocol.",
   "type": "module",
   "bin": {
     "knosky": "bin/knosky.mjs"
   },
   "files": [
-    "bin",
-    "core",
-    "renderer",
+    "CHANGELOG.md",
+    "CREDITS.md",
+    "LICENSE.md",
+    "LIMITATIONS.md",
+    "PRIVACY.md",
+    "README.md",
+    "SECURITY.md",
     "action",
     "action.yml",
+    "bin",
+    "core",
     "mcp/server.mjs",
-    "README.md",
-    "LICENSE.md",
-    "SECURITY.md",
-    "PRIVACY.md",
-    "LIMITATIONS.md",
-    "CREDITS.md",
-    "CHANGELOG.md"
+    "renderer",
+    "ssot"
   ],
   "engines": {
     "node": ">=20"

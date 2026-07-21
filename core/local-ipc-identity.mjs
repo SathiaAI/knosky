@@ -356,6 +356,14 @@ export function resolveLeaseIdentity(leaseStore, leaseId, payloadAgentId = null)
     return { ok: false, reason: 'unknown_lease_id' };
   }
 
+  // TTL: reject active leases past expires_at even if status not swept yet
+  if (lease.expires_at) {
+    const exp = Date.parse(lease.expires_at);
+    if (Number.isFinite(exp) && exp <= Date.now()) {
+      return { ok: false, reason: 'lease_expired' };
+    }
+  }
+
   if (lease.status === 'expired') {
     return { ok: false, reason: 'lease_expired' };
   }

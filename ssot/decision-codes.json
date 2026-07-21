@@ -1,0 +1,133 @@
+{
+  "$schema_comment": "KnoSky DEC-108 / R3-D closed decision-code freeze. Identical list on protocol page, README, wiki, fixtures.",
+  "id": "knosky-decision-codes",
+  "version": "1.0.0",
+  "status": "draft-freeze",
+  "dec": ["DEC-108", "DEC-106"],
+  "last_updated": "2026-07-19",
+  "lattice_note": "policy-lattice.mjs uses DENY > ALLOW > NOT_APPLICABLE for rule combine. Protocol decision_code on the wire extends that with reason-specific DENY_* and Mode A label.",
+  "codes": [
+    {
+      "code": "ALLOW",
+      "http_analogy": 200,
+      "mode": "B",
+      "authorizing": true,
+      "metadata_disclosed": true,
+      "meaning": "Route/list/bundle returned under policy; audit receipt present.",
+      "client_hint": "Proceed using pointers; still open live files for truth."
+    },
+    {
+      "code": "DENY",
+      "http_analogy": 403,
+      "mode": "B",
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "No route; generic policy or authorization denial without subclass.",
+      "client_hint": "No authorized path; do not probe for hidden structure."
+    },
+    {
+      "code": "DENY_IDENTITY",
+      "http_analogy": 401,
+      "mode": "B",
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "Missing, unknown, expired/revoked lease, or spoofed agent identity.",
+      "client_hint": "Register/bind agent + valid lease before governed calls."
+    },
+    {
+      "code": "DENY_POLICY",
+      "http_analogy": 403,
+      "mode": "B",
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "Policy missing, invalid, unsigned when required, or explicit policy DENY.",
+      "client_hint": "Fix domain policy/governance; re-run kc_policy_check."
+    },
+    {
+      "code": "DENY_AUDIT",
+      "http_analogy": 503,
+      "mode": "B",
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "Ledger write or verify failed; fail closed — no ALLOW payload.",
+      "client_hint": "Check disk/permissions for audit ledger; retry later."
+    },
+    {
+      "code": "DENY_FRESHNESS",
+      "http_analogy": 409,
+      "mode": "B",
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "Map or evidence stale when freshness required.",
+      "client_hint": "Re-index / refresh map rev; retry."
+    },
+    {
+      "code": "DENY_EVIDENCE",
+      "http_analogy": 403,
+      "mode": "B",
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "Required security evidence failed (e.g. lockdown/evidence profile requirement).",
+      "client_hint": "Run knosky doctor; satisfy profile evidence or choose a lower claim profile."
+    },
+    {
+      "code": "ERROR_INVALID_INPUT",
+      "http_analogy": 400,
+      "mode": ["A", "B"],
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "Bad arguments / schema validation failure.",
+      "client_hint": "Fix tool arguments; see validation details (non-oracle)."
+    },
+    {
+      "code": "ERROR_INDEX",
+      "http_analogy": 500,
+      "mode": ["A", "B"],
+      "authorizing": false,
+      "metadata_disclosed": false,
+      "meaning": "City/index load missing or corrupt.",
+      "client_hint": "Build or repair local map index."
+    },
+    {
+      "code": "ADVISORY_UNAUTH",
+      "http_analogy": 200,
+      "mode": "A",
+      "authorizing": false,
+      "metadata_disclosed": true,
+      "meaning": "Explicit Mode A non-governed advisory navigation. Not authorized, not policy-certified, not swarm-safe.",
+      "client_hint": "Treat as structural tips only; verify before acting; do not claim governance.",
+      "aliases_rejected": ["ALLOW", "authorized", "swarm-safe"]
+    }
+  ],
+  "closed_set": [
+    "ALLOW",
+    "DENY",
+    "DENY_IDENTITY",
+    "DENY_POLICY",
+    "DENY_AUDIT",
+    "DENY_FRESHNESS",
+    "DENY_EVIDENCE",
+    "ERROR_INVALID_INPUT",
+    "ERROR_INDEX",
+    "ADVISORY_UNAUTH"
+  ],
+  "rules": [
+    "No open-string decision codes on the wire.",
+    "Mode B terminal ALLOW requires receipt_id.",
+    "All DENY_* and DENY must set metadata_disclosed=false for restricted data.",
+    "ADVISORY_UNAUTH must appear on Mode A route responses.",
+    "Pack smoke fixtures snapshot this closed_set.",
+    "CI gate: unknown code in responses fails release."
+  ],
+  "safe_deny_package": {
+    "required_fields": ["decision_code", "mode", "metadata_disclosed"],
+    "optional_fields": ["receipt_id", "next_action", "request_id"],
+    "forbidden_on_deny": [
+      "restricted path lists",
+      "blocked district node dumps",
+      "other agents lease inventories",
+      "file bodies",
+      "secrets"
+    ]
+  }
+}

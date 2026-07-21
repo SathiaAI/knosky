@@ -7,4 +7,5 @@ useDefault = true
 description = "test/regulated-sim-fixtures.mjs deliberately contains synthetic, fake secret-shaped strings (PEM stub, etc.) used to test core/contract.mjs's own redaction logic — reviewed 2026-07-02, not real credentials."
 paths = [
   '''test/regulated-sim-fixtures\.mjs''',
+  '''test/trust-root-rekey\.test\.mjs''',
 ]

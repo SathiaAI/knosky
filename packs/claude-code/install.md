@@ -48,9 +48,11 @@ claude mcp add knosky \
 | `KC_ROOT` | no | Repo root for bundle scan |
 
 ## 3. Mode B lease
+> **Domain must match MCP:** register into the same domain the server uses (derived from `KC_CITY` unless `KC_DOMAIN` is set). Example: `--domain "$(dirname "$KC_CITY")/.knosky"`.
+
 
 ```bash
-node bin/knosky.mjs agent-register --agent claude-code --role coder
+node bin/knosky.mjs agent-register --domain "$(dirname "$KC_CITY")/.knosky" --agent claude-code --role coder
 ```
 
 Pass **`leaseId`** into `kc_route`, `kc_policy_check`, `kc_bundle`. Payload `agentId` is never authoritative alone.

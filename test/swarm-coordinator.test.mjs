@@ -117,7 +117,9 @@ test('heatmap written to .knosky/swarm/heatmap.json', () => {
 
     swarm.issueLease({ agentId: 'heat-a' });
     swarm.issueLease({ agentId: 'heat-b' });
-    swarm.claim({ agentId: 'heat-a', kind: 'district', resource: 'public' });
+    const heatLease = swarm.issueLease({ agentId: 'heat-a' });
+    assert.equal(heatLease.ok, true);
+    swarm.claim({ agentId: 'heat-a', leaseId: heatLease.leaseId, kind: 'district', resource: 'public' });
 
     const wr = swarm.writeHeatmap();
     assert.equal(wr.ok, true);

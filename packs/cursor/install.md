@@ -39,9 +39,11 @@ Copy [`mcp.json.example`](./mcp.json.example) into your Cursor MCP settings (use
 Restart Cursor / reload MCP after edits.
 
 ## 3. Mode B lease
+> **Domain must match MCP:** register into the same domain the server uses (derived from `KC_CITY` unless `KC_DOMAIN` is set). Example: `--domain "$(dirname "$KC_CITY")/.knosky"`.
+
 
 ```bash
-node bin/knosky.mjs agent-register --agent cursor-dev --role coder
+node bin/knosky.mjs agent-register --domain "$(dirname "$KC_CITY")/.knosky" --agent cursor-dev --role coder
 ```
 
 Feed **`leaseId`** to governed tools. No lease → **`DENY_IDENTITY`** on Mode B path.

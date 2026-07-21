@@ -45,12 +45,14 @@ Register a stdio MCP server named `knosky` (Hermes MCP config shape may vary by 
 - **advisory** — map-oriented; Mode A labels required; not governed marketing.
 - **security** — coding tools **plus** `kc_audit_query` / `kc_audit_verify`.
 
-## 3. Mode B lease (`agent-register`)
+## 3. Mode B lease
+> **Domain must match MCP:** register into the same domain the server uses (derived from `KC_CITY` unless `KC_DOMAIN` is set). Example: `--domain "$(dirname "$KC_CITY")/.knosky"`.
+ (`agent-register`)
 
 Governed Tier 1 calls need a server-issued lease:
 
 ```bash
-node bin/knosky.mjs agent-register --agent hermes-local --role coder
+node bin/knosky.mjs agent-register --domain "$(dirname "$KC_CITY")/.knosky" --agent hermes-local --role coder
 ```
 
 Use the JSON **`leaseId`** on `kc_route`, `kc_policy_check`, and `kc_bundle`.

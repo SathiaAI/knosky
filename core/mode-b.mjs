@@ -229,9 +229,38 @@ export function createModeBDoor(opts) {
       } else if (tool === 'bundle') {
         if (!bundleNodeIds.length && req.destination) {
           raw = kcRoute(cityCtx, String(req.destination).slice(0, 400), { limit: 8 });
-          bundleNodeIds = (raw.route || []).map((e) => e.id).filter(Boolean);
+          // Policy-filter route waypoints BEFORE bundling (don't leak restricted ids)
+          const filtered = filterRouteByPolicy(raw, agentId);
+          bundleNodeIds = (filtered.route || []).map((e) => e.id).filter(Boolean);
+          className = inferRouteClass(cityCtx, filtered);
+        } else if (bundleNodeIds.length) {
+          // Explicit nodeIds: derive class from allowed nodes; drop denied nodes
+          const kept = [];
+          let best = null;
+          const order = ['public', 'internal', 'restricted', 'confidential', 'blocked'];
+          for (const id of bundleNodeIds) {
+            const node =
+              typeof cityCtx.byId?.get === 'function' ? cityCtx.byId.get(id) : cityCtx.byId?.[id];
+            const cls = node ? loadClass(node) : DEFAULT_CLASS;
+            const polN = decidePolicy(agentId, cls, 'bundle');
+            if (polN.ok) {
+              kept.push(id);
+              if (best == null || order.indexOf(cls) < order.indexOf(best)) best = cls;
+            }
+          }
+          bundleNodeIds = kept;
+          className = best || DEFAULT_CLASS;
+        } else {
+          return envelope({ code: CODES.ERROR_INVALID_INPUT, mode: 'B', request_id });
         }
-        className = raw ? inferRouteClass(cityCtx, raw) : DEFAULT_CLASS;
+        if (!bundleNodeIds.length) {
+          return envelope({
+            code: CODES.DENY_POLICY,
+            mode: 'B',
+            request_id,
+            next_action: 'No authorized nodes remain for bundle under current agent classes',
+          });
+        }
       } else {
         return envelope({ code: CODES.ERROR_INVALID_INPUT, mode: 'B', request_id });
       }
@@ -250,18 +279,16 @@ export function createModeBDoor(opts) {
         });
       }
 
-      // Audit BEFORE allow payload (DEC-106)
-      const rc = receipt(CODES.ALLOW, agentId, tool, destination, { class: className });
-      if (!rc.ok) {
-        return envelope({
-          code: CODES.DENY_AUDIT,
-          mode: 'B',
-          request_id,
-          next_action: rc.hint,
-        });
-      }
-
       if (tool === 'policy_check') {
+        const rc = receipt(CODES.ALLOW, agentId, tool, destination, { class: className });
+        if (!rc.ok) {
+          return envelope({
+            code: CODES.DENY_AUDIT,
+            mode: 'B',
+            request_id,
+            next_action: rc.hint,
+          });
+        }
         return envelope({
           code: CODES.ALLOW,
           mode: 'B',
@@ -277,6 +304,16 @@ export function createModeBDoor(opts) {
       }
 
       if (tool === 'route') {
+        // Audit BEFORE allow payload (DEC-106)
+        const rc = receipt(CODES.ALLOW, agentId, tool, destination, { class: className });
+        if (!rc.ok) {
+          return envelope({
+            code: CODES.DENY_AUDIT,
+            mode: 'B',
+            request_id,
+            next_action: rc.hint,
+          });
+        }
         const authorized = filterRouteByPolicy(raw, agentId);
         authorized.receipt_id = rc.receipt_id;
         authorized.agent_id = agentId;
@@ -292,7 +329,7 @@ export function createModeBDoor(opts) {
       if (tool === 'bundle') {
         const ids = bundleNodeIds;
         if (!ids.length) {
-          return envelope({ code: CODES.ERROR_INVALID_INPUT, mode: 'B', request_id, receipt_id: rc.receipt_id });
+          return envelope({ code: CODES.ERROR_INVALID_INPUT, mode: 'B', request_id });
         }
         try {
           const manifest = kcBundle(cityCtx, ids, {
@@ -300,12 +337,27 @@ export function createModeBDoor(opts) {
             expiry: req.expiry ?? null,
           });
           if (manifest.secret_scan && manifest.secret_scan.status === 'blocked') {
+            // Final decision is DENY — audit the denial, never an ALLOW receipt
+            const rcDeny = receipt(CODES.DENY_EVIDENCE, agentId, tool, destination, {
+              class: className,
+              reason: 'secret_scan_blocked',
+            });
             return envelope({
               code: CODES.DENY_EVIDENCE,
               mode: 'B',
               request_id,
-              receipt_id: rc.receipt_id,
+              receipt_id: rcDeny.ok ? rcDeny.receipt_id : undefined,
               next_action: 'Bundle blocked by fail-closed secret scan',
+            });
+          }
+          // Audit ALLOW only after evidence checks pass
+          const rc = receipt(CODES.ALLOW, agentId, tool, destination, { class: className });
+          if (!rc.ok) {
+            return envelope({
+              code: CODES.DENY_AUDIT,
+              mode: 'B',
+              request_id,
+              next_action: rc.hint,
             });
           }
           return envelope({

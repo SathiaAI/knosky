@@ -454,60 +454,69 @@ export function createSwarmCoordinator(opts = {}) {
   }
 
   /**
-   * File or district claim with conflict deny + optional FIFO wait.
-   * @param {{ agentId: string, leaseId?: string, kind?: 'file'|'district', resource: string, enqueue?: boolean }} req
-   */
-  function claim(req = {}) {
-    const agentId = req.agentId;
-    const kind = req.kind === 'district' ? 'district' : 'file';
-    const resource = typeof req.resource === 'string' ? req.resource.trim() : '';
-    if (!agentId || !resource) {
-      return { ok: false, code: CODES.ERROR_INVALID_INPUT, reason: 'agentId_and_resource_required' };
-    }
-
-    expireDueLeases();
-
-    // Optional lease bind check (anti-spoof light)
-    if (req.leaseId) {
-      const lease = domain.leaseStore.get(req.leaseId);
-      if (!lease || lease.status !== 'active' || lease.agentId !== agentId) {
-        const d = noteDeny(agentId, 'bad_lease');
-        const rc = emit(CODES.DENY_IDENTITY, agentId, 'swarm_claim', {
-          event: 'claim_denied',
-          reason: 'bad_lease',
-          kind,
-          resource: resource.slice(0, 200),
-          probe: d.probe,
-        });
-        writeHeatmap();
+     * File or district claim with conflict deny + optional FIFO wait.
+     * leaseId is REQUIRED (Mode B / L3 lease-bound identity).
+     * @param {{ agentId: string, leaseId: string, kind?: 'file'|'district', resource: string, enqueue?: boolean }} req
+     */
+    function claim(req = {}) {
+      const agentId = req.agentId;
+      const kind = req.kind === 'district' ? 'district' : 'file';
+      const resource = typeof req.resource === 'string' ? req.resource.trim() : '';
+      if (!agentId || !resource) {
+        return { ok: false, code: CODES.ERROR_INVALID_INPUT, reason: 'agentId_and_resource_required' };
+      }
+      if (!req.leaseId || typeof req.leaseId !== 'string') {
         return {
           ok: false,
           code: CODES.DENY_IDENTITY,
-          reason: 'bad_lease',
-          probe: d.probe,
-          receipt_id: rc.ok ? rc.receipt_id : undefined,
+          reason: 'lease_required',
+          next_action: 'Pass leaseId from knosky agent-register / issueLease',
         };
       }
-      if (lease.expires_at && Date.parse(lease.expires_at) <= Date.now()) {
-        expireLease(req.leaseId);
-        const d = noteDeny(agentId, 'lease_expired');
-        const rc = emit(CODES.DENY_IDENTITY, agentId, 'swarm_claim', {
-          event: 'claim_denied',
-          reason: 'lease_expired',
-          kind,
-          resource: resource.slice(0, 200),
-          probe: d.probe,
-        });
-        writeHeatmap();
-        return {
-          ok: false,
-          code: CODES.DENY_IDENTITY,
-          reason: 'lease_expired',
-          probe: d.probe,
-          receipt_id: rc.ok ? rc.receipt_id : undefined,
-        };
+
+      expireDueLeases();
+
+      // Required lease bind check (anti-spoof)
+      {
+        const lease = domain.leaseStore.get(req.leaseId);
+        if (!lease || lease.status !== 'active' || lease.agentId !== agentId) {
+          const d = noteDeny(agentId, 'bad_lease');
+          const rc = emit(CODES.DENY_IDENTITY, agentId, 'swarm_claim', {
+            event: 'claim_denied',
+            reason: 'bad_lease',
+            kind,
+            resource: resource.slice(0, 200),
+            probe: d.probe,
+          });
+          writeHeatmap();
+          return {
+            ok: false,
+            code: CODES.DENY_IDENTITY,
+            reason: 'bad_lease',
+            probe: d.probe,
+            receipt_id: rc.ok ? rc.receipt_id : undefined,
+          };
+        }
+        if (lease.expires_at && Date.parse(lease.expires_at) <= Date.now()) {
+          expireLease(req.leaseId, { system: true });
+          const d = noteDeny(agentId, 'lease_expired');
+          const rc = emit(CODES.DENY_IDENTITY, agentId, 'swarm_claim', {
+            event: 'claim_denied',
+            reason: 'lease_expired',
+            kind,
+            resource: resource.slice(0, 200),
+            probe: d.probe,
+          });
+          writeHeatmap();
+          return {
+            ok: false,
+            code: CODES.DENY_IDENTITY,
+            reason: 'lease_expired',
+            probe: d.probe,
+            receipt_id: rc.ok ? rc.receipt_id : undefined,
+          };
+        }
       }
-    }
 
     if (backpressureHit(agentId)) {
       const d = noteDeny(agentId, 'backpressure');
@@ -586,33 +595,42 @@ export function createSwarmCoordinator(opts = {}) {
     }
 
     const claimId = mintId('claim');
-    const rec = {
-      claimId,
-      agentId,
-      kind,
-      resource,
-      since: nowIso(),
-    };
-    claims.set(key, rec);
-    persistClaims();
-    noteAction(agentId);
-    const rc = emit(CODES.ALLOW, agentId, 'swarm_claim', {
-      event: 'claim_granted',
-      claim_id: claimId,
-      kind,
-      resource: resource.slice(0, 200),
-    });
-    writeHeatmap();
-    return {
-      ok: true,
-      code: CODES.ALLOW,
-      claimId,
-      agentId,
-      kind,
-      resource,
-      receipt_id: rc.ok ? rc.receipt_id : undefined,
-    };
-  }
+        const rec = {
+          claimId,
+          agentId,
+          kind,
+          resource,
+          since: nowIso(),
+        };
+        // Audit first — fail closed before mutating claims map
+        const rc = emit(CODES.ALLOW, agentId, 'swarm_claim', {
+          event: 'claim_granted',
+          claim_id: claimId,
+          kind,
+          resource: resource.slice(0, 200),
+        });
+        if (!rc.ok) {
+          return {
+            ok: false,
+            code: CODES.DENY_AUDIT,
+            reason: 'audit_write_failed',
+            next_action: rc.reason || 'audit ledger unavailable',
+          };
+        }
+        claims.set(key, rec);
+        persistClaims();
+        noteAction(agentId);
+        writeHeatmap();
+        return {
+          ok: true,
+          code: CODES.ALLOW,
+          claimId,
+          agentId,
+          kind,
+          resource,
+          receipt_id: rc.receipt_id,
+        };
+      }
 
   /**
    * Release a file/district claim; promote FIFO waiter if any.

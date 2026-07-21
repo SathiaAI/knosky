@@ -40,10 +40,12 @@ If your Codex build uses `mcpServers` (camelCase) instead of `mcp_servers`, keep
 | `KC_DOMAIN` | no | Local trust domain (leases, audit) |
 | `KC_ROOT` | no | Bundle secret-scan root |
 
-## 3. Mode B lease (`knosky agent-register`)
+## 3. Mode B lease
+> **Domain must match MCP:** register into the same domain the server uses (derived from `KC_CITY` unless `KC_DOMAIN` is set). Example: `--domain "$(dirname "$KC_CITY")/.knosky"`.
+ (`knosky agent-register`)
 
 ```bash
-node bin/knosky.mjs agent-register --agent codex-cli --role coder
+node bin/knosky.mjs agent-register --domain "$(dirname "$KC_CITY")/.knosky" --agent codex-cli --role coder
 ```
 
 Pass **`leaseId`** on:
@@ -77,7 +79,7 @@ Codex often reads repo **`AGENTS.md`**. Keep product and coding rules there. Add
 ```markdown
 ## KnoSky MCP
 Map + Mode B GPS via knosky server. Register lease:
-`node bin/knosky.mjs agent-register --agent codex-cli`
+`node bin/knosky.mjs agent-register --domain "$(dirname "$KC_CITY")/.knosky" --agent codex-cli`
 Tools: ssot/tool-menu.json. No swarm-safe claim unless L3 doctor green.
 ```
 

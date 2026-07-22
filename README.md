@@ -14,7 +14,7 @@ npm: **`knosky@0.7.0`** (`npx knosky@latest`) · Sites (docs only — **not** ru
   <img src="docs/media/hero-gps-infographic.jpg" alt="KnoSky GPS infographic — circular hub routes agents through identity, policy, and audit to the right files" width="920" />
 </p>
 
-<p align="center"><em>Same GPS hub shown on <a href="https://www.knosky.com/">knosky.com</a> — multi-agent routes around a single circular command hub (not a diamond).</em></p>
+<p align="center"><em>Same GPS hub shown on <a href="https://www.knosky.com/">knosky.com</a> — multi-agent routes around a single circular command hub.</em></p>
 
 ---
 

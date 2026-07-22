@@ -8,7 +8,7 @@
 
 > *Born from building [Sathia](https://sathia.ai).*
 
-npm: **`knosky@0.7.0`** (`npx knosky@latest`) · Sites: [knosky.com](https://knosky.com) · [knosky.wiki](https://knosky.wiki)
+npm: **`knosky@0.7.0`** (`npx knosky@latest`) · Sites (docs only — **not** runtime egress): [knosky.com](https://knosky.com) · [knosky.wiki](https://knosky.wiki)
 
 <p align="center">
   <img src="docs/media/hero-gps-infographic.jpg" alt="KnoSky GPS infographic — circular hub routes agents through identity, policy, and audit to the right files" width="920" />
@@ -159,27 +159,41 @@ Closed decision codes:
 
 ### 4. L3 swarm coordinator — what works (Wave 1 foundation)
 
-Implemented in-process + CLI on the **local trust domain** (not a multi-tenant cloud swarm product):
+Implemented in-process + CLI on the **local trust domain** (not a multi-tenant cloud swarm product).
 
-| Capability | Status (validated) |
+**Evidence meaning:** rows below = APIs in `core/swarm-coordinator.mjs` + unit tests (`test/swarm-coordinator.test.mjs`, Mode B / operator-auth) + local ad-hoc matrix / `knosky swarm bench`. This is **foundation proof**, not a production multi-tenant fleet claim.
+
+| Capability | Status |
 | :--- | :--- |
-| Distinct agent identities + leases | **Works** — issue / list / bind via domain store |
-| Lease expire (holder) + revoke (holder or operator) | **Works** — foreign revoke denied |
-| File + district **traffic claims** (not VCS locks) | **Works** |
-| Claim conflict DENY + FIFO wait position | **Works** (fairness) |
-| Quotas + backpressure (`maxClaimsPerAgent`, action windows) | **Works** |
-| Claim **requires `leaseId`** | **Works** |
-| Multi-agent audit receipts (`meta.swarm`, hash chain) | **Works** |
-| Anti-probe on rapid DENY floods | **Works** |
-| Heatmap snapshot + `knosky swarm status` | **Works** (CLI ops skin, not a full GUI console) |
-| `knosky swarm bench` | **Works** (conflict + quota measure) |
-| Mode B composition (dual-op elevated classes, etc.) | **Works** — required under L3 |
+| Distinct agent identities + leases | **Implemented** — issue / list / bind via domain store |
+| Lease expire / revoke auth model | **Implemented** — see honesty note below |
+| File + district **traffic claims** (not VCS locks) | **Implemented** |
+| Claim conflict DENY + FIFO wait position | **Implemented** (fairness) |
+| Quotas + backpressure (`maxClaimsPerAgent`, action windows) | **Implemented** |
+| Claim **requires `leaseId`** | **Implemented** |
+| Multi-agent audit receipts (`meta.swarm`, hash chain) | **Implemented** |
+| Anti-probe on rapid DENY floods | **Implemented** |
+| Heatmap snapshot + `knosky swarm status` | **Implemented** (CLI ops skin, not a full GUI console) |
+| `knosky swarm bench` | **Implemented** (conflict + quota measure) |
+| Mode B composition | **Implemented** — dual-operator **quorum** required to **register elevated classes**; L2 path underneath L3 |
+
+**Lease revoke / expire honesty (security-critical):**
+
+| Who | Can expire/revoke a lease? | Quorum? |
+| :--- | :--- | :--- |
+| **Holder** (`callerAgentId` matches lease agent) | Yes — self only | N/A (self) |
+| **Any third-party agent** | **No** — `operator_or_holder_required` | — |
+| **Operator** (`operatorToken` / `KC_OPERATOR_TOKEN`) | Yes — single valid operator token | **No dual threshold today** |
+| **Elevated class registration** (separate path) | Needs **two** distinct operators | **Yes** (`assertOperatorQuorum`) |
+
+Wave 1 does **not** claim multi-party quorum for operator lease revoke. A single authentic operator (or the holder) can change that lease. Treat operator token custody as security-critical until a future DEC adds revoke quorum if product wants it.
 
 **Public claim rules for L3**
 
 - You **may** say: local swarm **coordinator foundation**, lease-governed multi-agent routing, heatmap/status/bench tools exist.
-- You **must not** say: production “**swarm-safe fleet** at every install,” multi-tenant cloud isolation, or L3 ready without `knosky doctor` ceiling on *that* domain.
+- You **must not** say: production “**swarm-safe fleet** at every install,” multi-tenant cloud isolation, operator revoke is dual-control by default, or L3 ready without `knosky doctor` ceiling on *that* domain.
 - Doctor marks L3 modules as **FOUNDATION present** and keeps ladder guidance as **info** — not a green “ship swarm everywhere” badge.
+- Site URLs in this README are **documentation links only**. Default CLI/MCP paths do **not** call out to knosky.com / knosky.wiki.
 
 ```bash
 npx knosky@latest swarm status --domain .knosky

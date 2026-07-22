@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/media/knosky-lockup-cream.png" alt="KnoSky" width="420" />
+</p>
+
 # KnoSky
 
 **GPS for AI agents** — map any local repo/docs folder, route assistants to the right files, optional Mode B allow/deny receipts. City view is the human skin. Runs on your machine. Free.
@@ -5,6 +9,12 @@
 > *Born from building [Sathia](https://sathia.ai).*
 
 npm: **`knosky@0.7.0`** (`npx knosky@latest`) · Sites: [knosky.com](https://knosky.com) · [knosky.wiki](https://knosky.wiki)
+
+<p align="center">
+  <img src="docs/media/hero-gps-infographic.jpg" alt="KnoSky GPS infographic — circular hub routes agents through identity, policy, and audit to the right files" width="920" />
+</p>
+
+<p align="center"><em>Same GPS hub shown on <a href="https://www.knosky.com/">knosky.com</a> — multi-agent routes around a single circular command hub (not a diamond).</em></p>
 
 ---
 

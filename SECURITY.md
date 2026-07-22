@@ -41,6 +41,19 @@ KnoSky's local trust model applies the core security principles of TUF — role 
 
 HWM-file integrity (the `ledger.hwm.json` high-water-mark guard introduced in SAT-443) is part of KnoSky's local trust boundary: an attacker who can delete or modify that file — or any file under KnoSky's data directory — already has local write access to the machine, which is equivalent to controlling KnoSky's own code. This is the same boundary D-164 draws for the trust root generally; no fully-local, no-egress tool can defend against an attacker with local filesystem write access without a remote or hardware anchor, which would violate KnoSky's core no-egress design principle.
 
+## Mode B operator lease revoke (Wave 1 accepted risk)
+
+Lease expire/revoke is authorized in `core/swarm-coordinator.mjs` via `authorizeLeaseAdmin`:
+
+| Actor | Allowed? | Dual-operator quorum? |
+| :--- | :--- | :--- |
+| Lease **holder** (`callerAgentId` matches the lease) | Yes — self expire/revoke | N/A |
+| Unrelated agent | **No** (`operator_or_holder_required`) | — |
+| **Operator** with one valid `operatorToken` / `KC_OPERATOR_TOKEN` | Yes | **No** — single operator is enough today |
+| Elevated **class registration** (separate path in domain-store) | Requires two operators | **Yes** (`assertOperatorQuorum`) |
+
+**Important:** dual-operator quorum is **not** enforced on operator lease revoke/expire. README and this section both document that deliberately as Wave 1 behavior, not an accidental omission. Operator token custody is security-critical: compromise of one authentic operator token is a unilateral swarm-admin path for lease state. A future DEC may add revoke quorum if product/security wants dual control there without relying on token secrecy alone.
+
 ## Opt-in org export (SAT-546)
 
 KnoSky's core tool -- everything an `npm install knosky` / `npx knosky` user

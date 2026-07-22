@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ACTION_SCRIPT = path.join(ROOT, 'action', 'post-comment.mjs');
@@ -16,11 +16,11 @@ function setupRepo() {
   execFileSync('git', ['-C', d, 'init', '-q']);
   execFileSync('git', ['-C', d, 'config', 'user.email', 'a@b.com']);
   execFileSync('git', ['-C', d, 'config', 'user.name', 't']);
-  fs.writeFileSync(path.join(d, 'a.md'), '# A\n\nhello\n');
+  fs.writeFileSync(path.join(d, 'a.md'), '# A\\n\\nhello\\n');
   execFileSync('git', ['-C', d, 'add', '.']);
   execFileSync('git', ['-C', d, 'commit', '-qm', 'base']);
   const base = execFileSync('git', ['-C', d, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  fs.appendFileSync(path.join(d, 'a.md'), 'more\n');
+  fs.appendFileSync(path.join(d, 'a.md'), 'more\\n');
   execFileSync('git', ['-C', d, 'add', '.']);
   execFileSync('git', ['-C', d, 'commit', '-qm', 'second']);
   const head = execFileSync('git', ['-C', d, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -33,10 +33,11 @@ function setupRepo() {
 // so this test process's own fetch (and everything else) stays untouched.
 function runAction(env, mockScript) {
   const runner = path.join(os.tmpdir(), 'knosky-action-runner-' + Math.random().toString(36).slice(2) + '.mjs');
+  const actionUrl = pathToFileURL(ACTION_SCRIPT).href;
   fs.writeFileSync(runner, `
     ${mockScript}
     for (const [k, v] of Object.entries(${JSON.stringify(env)})) process.env[k] = v;
-    await import(${JSON.stringify(ACTION_SCRIPT)});
+    await import(${JSON.stringify(actionUrl)});
   `);
   const r = execFileSync(process.execPath, [runner], { encoding: 'utf8', timeout: 15000 });
   fs.rmSync(runner);
@@ -82,7 +83,7 @@ const commonEnv = { KC_ROOT: d, KC_CITY: cityPath, KC_BASE: base, KC_HEAD: head 
     process.env.GITHUB_TOKEN = 'fake'; process.env.KC_REPO = 'SathiaAI/knosky'; process.env.KC_PR_NUMBER = '7';
     process.env.KC_ROOT = ${JSON.stringify(d)}; process.env.KC_CITY = ${JSON.stringify(cityPath)};
     process.env.KC_BASE = ${JSON.stringify(base)}; process.env.KC_HEAD = ${JSON.stringify(head)};
-    await import(${JSON.stringify(ACTION_SCRIPT)});
+    await import(${JSON.stringify(pathToFileURL(ACTION_SCRIPT).href)});
     setTimeout(() => { console.log('CALLS:' + JSON.stringify(globalThis.__calls.map(c => c.method))); }, 200);
   `);
   const out = execFileSync(process.execPath, [runner], { encoding: 'utf8', timeout: 15000 });

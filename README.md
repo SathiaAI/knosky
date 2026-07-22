@@ -64,7 +64,7 @@ Clone path:
 git clone https://github.com/SathiaAI/knosky && cd knosky && npm install && node bin/knosky.mjs .
 ```
 
-**Requirements:** [Node.js](https://nodejs.org) **20+** (see `package.json` engines; 18 may work for older tags).
+**Requirements:** [Node.js](https://nodejs.org) **20+** (`package.json` `engines.node` is `>=20`).
 
 After install:
 
@@ -140,7 +140,11 @@ Default coding profile uses **Mode B** for governed tools. Mode A stays labeled.
 **Mode B lease (governed calls):**
 
 ```bash
-node bin/knosky.mjs agent-register --domain .knosky --agent my-agent --role coder
+# From any folder after installing / using the package bin:
+npx knosky@latest agent-register --domain .knosky --agent my-agent --role coder
+
+# Clone-only equivalent:
+# node bin/knosky.mjs agent-register --domain .knosky --agent my-agent --role coder
 ```
 
 Pass **`leaseId`** into `kc_route` / `kc_policy_check` / `kc_bundle`. Payload `agentId` alone is not identity.
@@ -186,7 +190,7 @@ Implemented in-process + CLI on the **local trust domain** (not a multi-tenant c
 | **Operator** (`operatorToken` / `KC_OPERATOR_TOKEN`) | Yes — single valid operator token | **No dual threshold today** |
 | **Elevated class registration** (separate path) | Needs **two** distinct operators | **Yes** (`assertOperatorQuorum`) |
 
-Wave 1 does **not** claim multi-party quorum for operator lease revoke. A single authentic operator (or the holder) can change that lease. Treat operator token custody as security-critical until a future DEC adds revoke quorum if product wants it.
+Wave 1 does **not** claim multi-party quorum for operator lease revoke. A single authentic operator (or the holder) can change that lease. Treat operator token custody as security-critical until a future DEC adds revoke quorum if product wants it. Documented accepted risk: [SECURITY.md](./SECURITY.md) (Mode B operator lease revoke).
 
 **Public claim rules for L3**
 
@@ -197,7 +201,8 @@ Wave 1 does **not** claim multi-party quorum for operator lease revoke. A single
 
 ```bash
 npx knosky@latest swarm status --domain .knosky
-npx knosky@latest swarm bench
+# Always use a throwaway domain for bench — never your live project .knosky:
+npx knosky@latest swarm bench --domain /tmp/knosky-swarm-bench
 npx knosky@latest doctor
 ```
 
@@ -205,7 +210,7 @@ Windows: network lockdown is **unsupported/inactive** at runtime for this CLI un
 
 ### 5. PR navigation comments (GitHub Action — PR-GPS)
 
-Advisory neighbor only (does not gate merge by default):
+Advisory neighbor only — the action **never blocks** or gates the build by default:
 
 ```yaml
 - uses: actions/checkout@v4

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { kcBundle } from '../core/bundle.mjs';
 import { loadConfig, parseConfigYaml } from '../core/config.mjs';
 import { parseDestination } from '../core/destination.mjs';
@@ -180,7 +180,7 @@ function index(dir, out, extra = [], timeoutMs = 30000) {
   const maliciousBase = '--output=' + pwnedPath;
   const scriptPath = path.join(d, '__runner.mjs');
   fs.writeFileSync(scriptPath, `
-    import { knoskyCi } from ${JSON.stringify(path.join(ROOT, 'core/ci.mjs'))};
+    import { knoskyCi } from ${JSON.stringify(pathToFileURL(path.join(ROOT, 'core/ci.mjs')).href)};
     const res = await knoskyCi({ root: ${JSON.stringify(d)}, base: ${JSON.stringify(maliciousBase)}, head: 'HEAD' });
     console.log(JSON.stringify({ exitCode: res.exitCode }));
   `);

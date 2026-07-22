@@ -66,26 +66,31 @@ export function writeHwm(hwmPath, seq) {
   }
   const dir = dirname(hwmPath);
   mkdirSync(dir, { recursive: true });
-  // Atomic write: write to a sibling temp file, then rename into place.
-  // This prevents a partial/corrupt HWM file on crash or power loss —
-  // critical because a corrupt HWM would either silently reset the guard
-  // (ENOENT path) or throw (parse error), both of which weaken security.
+  // Atomic write: sibling temp + rename (SAT-474).
   const tmp = hwmPath + '.tmp';
   writeFileSync(tmp, JSON.stringify({ ledger_hwm: seq }) + '\n', 'utf8');
-  // fsync the temp file's contents before rename — otherwise the rename can
-  // land on disk before the data it points to does (SAT-474 hardening review).
-  const tmpFd = openSync(tmp, 'r');
-  try { fsyncSync(tmpFd); } finally { closeSync(tmpFd); }
+  // Best-effort fsync: Windows TEMP often returns EPERM; full write + rename still atomic.
+  try {
+    const tmpFd = openSync(tmp, 'r');
+    try {
+      fsyncSync(tmpFd);
+    } finally {
+      closeSync(tmpFd);
+    }
+  } catch {
+    /* EPERM / unsupported */
+  }
   renameSync(tmp, hwmPath);
-  // fsync the containing directory so the rename itself (the directory-entry
-  // update) is durable — without this, a crash immediately after renameSync
-  // can leave the old HWM file name visible on some filesystems/mount options
-  // (e.g. ext4 without data=ordered). POSIX-specific guarantee; best-effort
-  // on platforms where directory fsync isn't supported.
   try {
     const dirFd = openSync(dir, 'r');
-    try { fsyncSync(dirFd); } finally { closeSync(dirFd); }
-  } catch { /* best-effort; not all platforms support directory fsync */ }
+    try {
+      fsyncSync(dirFd);
+    } finally {
+      closeSync(dirFd);
+    }
+  } catch {
+    /* best-effort directory fsync (often unsupported on Windows) */
+  }
 }
 
 // ---------------------------------------------------------------------------

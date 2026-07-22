@@ -10,11 +10,16 @@
 // secret-like pattern in the emitted artifacts — everything else is caught and
 // logged, never thrown past main().
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CORE = path.resolve(HERE, '..', 'core');
 const MARKER = '<!-- knosky-pr-gps -->';
+
+/** Dynamic import that works with Windows absolute paths (file:// required). */
+function importCore(name) {
+  return import(pathToFileURL(path.join(CORE, name)).href);
+}
 
 async function ghFetch(token, url, opts = {}) {
   const res = await fetch(url, {
@@ -57,8 +62,8 @@ async function main() {
   const repo = env.KC_REPO || '';
   const prNumber = env.KC_PR_NUMBER || '';
 
-  const { knoskyCi } = await import(path.join(CORE, 'ci.mjs'));
-  const { renderPrComment } = await import(path.join(CORE, 'pr-comment.mjs'));
+  const { knoskyCi } = await importCore('ci.mjs');
+  const { renderPrComment } = await importCore('pr-comment.mjs');
 
   const { exitCode, routeJson, safetyJson } = await knoskyCi({
     root: env.KC_ROOT || '.',

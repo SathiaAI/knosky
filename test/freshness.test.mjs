@@ -19,7 +19,7 @@ import { makeRouteDoc, validateRouteDoc, makeIntentManifest, validateIntentManif
 import { kcRoute } from '../core/route.mjs';
 import { kcBundle } from '../core/bundle.mjs';
 
-const ROOT_DIR = new URL('..', import.meta.url).pathname;
+const ROOT_DIR = fileURLToPath(new URL('..', import.meta.url));
 const NODE = process.execPath;
 
 let failures = 0;

@@ -95,7 +95,7 @@ Do **not** market “attack tested” until you pick C (or B with clear scope).
 
 ## Honesty
 
-- Phase 2 is **private gauntlet evidence**, not a SOC2 certificate.  
+- Phase 2 is **private gauntlet evidence**, not a compliance certificate.  
 - Deterministic families always run; live multi-model is opt-in.  
 - Windows F0.5 egress warn from Phase 1 still applies.
 

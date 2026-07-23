@@ -156,7 +156,7 @@ Flags: `--no-open`, `--no-serve`.
 | **L3 coordinator foundation** | Local multi-helper leases/claims/heatmap/bench — **not** cloud fleet product |
 | **PR-GPS Action** | Advisory PR comments — **never blocks** the build by default |
 
-**Not in the box:** coding model replacement · cloud vault of everyone’s source · “swarm-safe production factory everywhere” · SOC2 certificate pealed from a report file · automatic public attack-pack publish.
+**Not in the box:** coding model replacement · cloud vault of everyone’s source · “swarm-safe production factory everywhere” · a compliance certificate peeled from a report file · automatic public attack-pack publish.
 
 ---
 
@@ -240,7 +240,7 @@ npx knosky@latest swarm bench --domain /tmp/knosky-swarm-bench
 ```
 
 **You may say:** local GPS, cited map tools, optional Mode B receipts, enterprise security report/audit pack, private synthetic gauntlet, architecture hangboard, L3 **foundation**.  
-**You must not say:** production swarm-safe fleet everywhere · dual-control operator lease revoke by default · “no egress guaranteed on Windows” without packaging proof · public attack-tested as marketing without Owner publish seek · SOC2 from a JSON report alone.
+**You must not say:** production swarm-safe fleet everywhere · dual-control operator lease revoke by default · “no egress guaranteed on Windows” without packaging proof · public attack-tested as marketing without Owner publish seek · a compliance certificate derived from a JSON report alone.
 
 **Lease revoke (accepted Wave-1 risk):** holder **or** a **single** valid operator token — **not** dual quorum on revoke. Dual quorum applies to **elevated registration**. See [SECURITY.md](./SECURITY.md).
 

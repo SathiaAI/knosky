@@ -32,7 +32,7 @@ These are **local proxies for pilots**, not a full enterprise static-analysis pr
 ## Commands (from engine folder)
 
 ```text
-cd "F:\Users\PaulPoulose\AI FUNDAMENTALS\KnoForge-Suite\session-2-knosky\research\knosky"
+cd "<path-to>\knosky"
 ```
 
 ### 1) Ensure city exists (if needed)

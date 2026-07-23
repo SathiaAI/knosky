@@ -439,7 +439,14 @@ export function runDeterministicAttacker(scenario, hostRoot) {
 }
 
 /**
- * Optional LLM reviewer — only if keys present. Returns null if offline.
+ * Optional LLM reviewer — only if keys present. Returns offline stub unless
+ * outbound HTTP is explicitly authorized. Defense-in-depth gate (PR #75 review):
+ * a live model call requires ALL of:
+ *   1) opts.allowLlm === true      — set ONLY by the `--llm` CLI flag path
+ *   2) KS_ADV_LLM in {'1','true'}  — explicit env opt-in
+ *   3) a non-empty API key         — ANTHROPIC/OpenRouter
+ * An env var alone can never trigger network egress; the flag alone can't either.
+ * Default `adversarial run` (no flag) is fully local/deterministic — no HTTP.
  */
 export async function runOptionalLlmReviewer(scenario, probeResult, opts = {}) {
   const key =
@@ -447,25 +454,37 @@ export async function runOptionalLlmReviewer(scenario, probeResult, opts = {}) {
     process.env.Anthropic_API_Key ||
     process.env.OPENROUTER_API_KEY ||
     '';
-  if (!key || opts.forceOffline) {
+
+  // Gate 1: explicit flag. Without opts.allowLlm we never touch the network,
+  // regardless of key/env presence.
+  if (!opts.allowLlm || opts.forceOffline) {
     return {
       family: 'reviewer_offline',
       scenario_id: scenario.id,
       enabled: false,
-      note: 'No API key — deterministic reviewer only',
+      note: 'Live LLM reviewer not authorized (--llm flag absent) — deterministic reviewer only',
       findings: [],
     };
   }
 
-  // Keep residual lean: structured deterministic review, with optional thin Haiku call later.
-  // If key is present, we still produce a rules-based analyst report tagged llm_ready
-  // and make at most one optional call when KS_ADV_LLM=1.
+  // Gate 2: explicit env opt-in.
   if (process.env.KS_ADV_LLM !== '1' && process.env.KS_ADV_LLM !== 'true') {
     return {
       family: 'reviewer_rules_llm_ready',
       scenario_id: scenario.id,
       enabled: false,
-      note: 'Key present but KS_ADV_LLM not set — skip live model spend; rules reviewer used',
+      note: 'KS_ADV_LLM not set — skip live model spend; rules reviewer used',
+      findings: [],
+    };
+  }
+
+  // Gate 3: key required.
+  if (!key) {
+    return {
+      family: 'reviewer_offline',
+      scenario_id: scenario.id,
+      enabled: false,
+      note: 'No API key present — deterministic reviewer only',
       findings: [],
     };
   }
@@ -631,10 +650,12 @@ export async function runGauntlet(opts = {}) {
       note: 'skipped',
     };
     if (opts.llm) {
+      // --llm flag is the sole authority for outbound HTTP; env opt-in still required inside.
       process.env.KS_ADV_LLM = process.env.KS_ADV_LLM || '1';
-      llmReview = await runOptionalLlmReviewer(scenario, probe, {});
+      llmReview = await runOptionalLlmReviewer(scenario, probe, { allowLlm: true });
     } else {
-      llmReview = await runOptionalLlmReviewer(scenario, probe, { forceOffline: !process.env.KS_ADV_LLM });
+      // No flag → hard offline, regardless of env/key presence.
+      llmReview = await runOptionalLlmReviewer(scenario, probe, { allowLlm: false, forceOffline: true });
     }
     const reviewer = runRulesReviewer(scenario, [probe, attacker, llmReview]);
     const pieces = [attacker, probe, llmReview, reviewer];

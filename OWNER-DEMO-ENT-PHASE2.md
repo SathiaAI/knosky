@@ -19,7 +19,7 @@ If everything holds: **PRIVATE GREEN**. Only then do we discuss going public.
 
 You must be in:
 
-`F:\Users\PaulPoulose\AI FUNDAMENTALS\KnoForge-Suite\session-2-knosky\research\knosky`
+`<path-to>\knosky`
 
 ### 1) List scenarios
 
@@ -115,7 +115,7 @@ ENT ADVERSARIAL PRIVATE GREEN
 | :--- | :--- |
 | `adversarial list` | 8 scenarios |
 | `adversarial run --llm` (OpenRouter loaded) | **PRIVATE GREEN · 8 / 0 / 8** |
-| Artifacts | Temp `knosky-adv-gauntlet-21f55c76` rollup opened |
+| Artifacts | Temp `knosky-adv-gauntlet-XXXX` rollup opened |
 | `test/enterprise-phase2-gauntlet.test.mjs` | **ALL PASS** |
 
 Publish: **not** automatic — Owner still chooses keep private / partners / public (`APPROVE ENT ADVERSARIAL PUBLISH` only if public).

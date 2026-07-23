@@ -1,6 +1,6 @@
 {
   "name": "knosky",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Local-first agentic GPS for repos: map + Mode B governed MCP routes (identity, policy, audit). Free protocol.",
   "type": "module",
   "bin": {
@@ -18,6 +18,7 @@
     "action.yml",
     "bin",
     "core",
+    "docs",
     "mcp/server.mjs",
     "renderer",
     "ssot"

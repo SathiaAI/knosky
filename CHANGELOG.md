@@ -2,6 +2,40 @@
 
 All notable changes to KnoSky. Versions are git-tagged on this repo.
 
+## [0.8.0] — Enterprise / Regulated path (opt-in)
+
+### Added
+- **Enterprise / Regulated Mode** (`knosky enterprise .` / `knosky regulated .`): named opt-in
+  profile with safer defaults — local-first, share-safe indexing, fail-closed on secret-like
+  values — that writes a **security report** (`.knosky/security-report.json` + `security-summary.md`)
+  and an **MCP capability matrix** (map read-only tools vs Mode B vs forbidden write/run).
+- **Audit bundle** (`knosky audit pack` / `knosky audit verify <dir>`): portable evidence folder a
+  reviewer can re-run without the author present — config, ignores, hashes, tool manifest,
+  provenance, security report. `audit verify` re-checks integrity and reports `PASS`/`FAIL`.
+- **Read-only map guarantee** (`docs/READ_ONLY_GUARANTEE.md`): documents and tests that map tools
+  (`kc_search`, `kc_get_node`, `kc_list_categories`, `kc_get_provenance`, `kc_related`) never write,
+  execute, or read outside the indexed root; Mode B stays a separate governed lane.
+- **Architecture intelligence** (`knosky intel .`): local district hangboard — documentation,
+  ownership (CODEOWNERS-aware), test-adjacency, churn, drift-vs-prior, and risk scores. Local
+  proxies for pilots; not a full static-analysis/CVE product; nothing uploaded.
+- **Private synthetic adversarial gauntlet** (`knosky adversarial list` / `run`): disposable
+  synthetic hosts (never customer data) across 8 attack classes — secrets, ignore rules, path
+  disclosure, MCP traversal, prompt injection, stale citation, symlink escape, hostile scale —
+  with attacker/probe/reviewer roles and a rollup report. **Private by default**; not a public
+  "attack-tested" claim.
+
+### Security
+- **LLM reviewer is no-egress by default.** The optional model-backed reviewer makes an outbound
+  call only when all three hold: the `--llm` flag, `KS_ADV_LLM` env opt-in, and a present API key.
+  A key or env var alone never triggers a network call; default `adversarial run` is fully local.
+- Synthetic credential fixtures are assembled at runtime (base64) so no credential-shaped literal
+  ships in source.
+
+### Docs
+- README rewritten to lead with value/outcomes (efficiency, risk averted, cost) and the Enterprise
+  path; claim-honesty preserved (L3 = coordinator **foundation**, Windows egress caveat, single
+  operator lease-revoke risk, private-gauntlet not public by default).
+
 ## [Unreleased] — F0.5 OS-level network lockdown for the evaluator process
 
 ### Security

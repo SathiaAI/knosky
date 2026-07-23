@@ -120,6 +120,247 @@ if (subcommand === 'doctor') {
   process.exit(doctorExitCode(card));
 }
 
+
+// ---------------------------------------------------------------------------
+// enterprise | regulated — named profile + share-safe index + security report
+//   knosky enterprise [path] [--no-open] [--no-serve] [--audit-pack]
+//   knosky regulated  [path] ...
+// ---------------------------------------------------------------------------
+if (subcommand === 'enterprise' || subcommand === 'regulated') {
+  const modeName = subcommand;
+  const { writeEnterpriseConfigStub, capabilityMatrix } = await import('../core/enterprise-mode.mjs');
+  const { buildSecurityReport, writeSecurityReportFiles, scanCityArtifactSecrets } = await import('../core/security-report.mjs');
+  const { packAuditBundle } = await import('../core/audit-bundle.mjs');
+  const { checkCityFreshness } = await import('../core/ro-guarantee.mjs');
+
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
+    return undefined;
+  };
+
+  const pos = argv.filter(a => !a.startsWith('--') && a !== subcommand);
+  const target = path.resolve(pos[0] || '.');
+  if (!fs.existsSync(target)) { console.error('KnoSky: path not found: ' + target); process.exit(1); }
+
+  const stub = writeEnterpriseConfigStub(target, modeName === 'regulated' ? 'regulated' : 'enterprise');
+  console.log('');
+  console.log('KnoSky ' + modeName + ' mode');
+  console.log(stub.created ? ('  wrote ' + stub.path) : ('  ' + stub.note));
+
+  const outDir = path.join(target, '.knosky');
+  fs.mkdirSync(outDir, { recursive: true });
+  const cityJson = path.join(outDir, 'city-data.json');
+  const cityHtml = path.join(outDir, 'city.html');
+  const run = (script, args) => spawnSync(NODE, [path.join(ROOT, script), ...args], { stdio: 'inherit' });
+
+  console.log('');
+  console.log('KnoSky -> indexing (share-safe) ' + target);
+  let r = run('core/fs-indexer.mjs', ['--root', target, '--out', cityJson, '--share-safe']);
+  if (r.status !== 0) {
+    console.error('');
+    console.error('KnoSky enterprise: indexing blocked or failed (fail-closed). Security report not written.');
+    process.exit(r.status || 1);
+  }
+
+  r = run('renderer/build-rich.mjs', [cityJson, cityHtml]);
+  if (r.status !== 0) { console.error(''); console.error('KnoSky: building the city failed.'); process.exit(1); }
+
+  let cityObj = null;
+  try { cityObj = JSON.parse(fs.readFileSync(cityJson, 'utf8')); } catch { cityObj = null; }
+  const residual = scanCityArtifactSecrets(cityJson);
+  const report = buildSecurityReport({
+    root: target,
+    cityPath: cityJson,
+    city: cityObj,
+    mode: modeName,
+    shareSafe: true,
+    absolutePaths: false,
+    secretsResidual: residual.total,
+    secretKinds: residual.kinds,
+  });
+  const written = writeSecurityReportFiles(outDir, report);
+  console.log('');
+  console.log('Security report: ' + written.jsonPath);
+  console.log('Summary:        ' + written.mdPath);
+  console.log('Share verdict:  ' + report.share_safe.shareable_verdict);
+  console.log('Risk:           ' + report.summary.risk_level);
+  console.log('Provenance:     ' + report.provenance.coverage_percent + '%');
+
+  const fresh = checkCityFreshness({ city: cityObj, root: target });
+  if (fresh.stale) {
+    console.log('Freshness:      STALE — ' + (fresh.issues || []).join(', '));
+    console.log('               ' + fresh.advice);
+  } else {
+    console.log('Freshness:      OK');
+  }
+
+  const matrixPath = path.join(outDir, 'mcp-capability-matrix.json');
+  fs.writeFileSync(matrixPath, JSON.stringify(capabilityMatrix(), null, 2) + '\n');
+  console.log('MCP matrix:     ' + matrixPath);
+
+  if (flags.has('--audit-pack')) {
+    const pack = packAuditBundle({ root: target, mode: modeName });
+    if (pack.ok) console.log('Audit bundle:   ' + pack.bundleDir);
+    else console.error('Audit pack failed: ' + (pack.reason || 'unknown'));
+  }
+
+  if (!flags.has('--no-open')) {
+    const isWin = process.platform === 'win32', isMac = process.platform === 'darwin';
+    const cmd = isWin ? 'cmd' : isMac ? 'open' : 'xdg-open';
+    const a = isWin ? ['/c', 'start', '', cityHtml] : [cityHtml];
+    try { spawn(cmd, a, { detached: true, stdio: 'ignore' }).unref(); } catch (_) {}
+  }
+
+  const mcpServer = path.join(ROOT, 'mcp', 'server.mjs');
+  console.log('');
+  console.log('  City:  ' + cityHtml);
+  console.log('Connect (Enterprise Mode — map tools are read-only navigation):');
+  console.log('  claude mcp add knosky -e KC_CITY="' + cityJson + '" -e KC_MODE="' + modeName + '" -- node "' + mcpServer + '"');
+  console.log('');
+  console.log('Next: knosky doctor --city "' + cityJson + '"');
+  console.log('      knosky audit pack --root "' + target + '"');
+  console.log('      knosky audit verify <bundleDir>');
+  if (!flags.has('--no-serve')) {
+    console.log('');
+    console.log('Starting local MCP (Ctrl+C to stop)...');
+    console.log('');
+    const child = spawn(NODE, [mcpServer], {
+      stdio: 'inherit',
+      env: { ...process.env, KC_CITY: cityJson, KC_MODE: modeName },
+    });
+    child.on('exit', (code) => process.exit(code || 0));
+  } else {
+    process.exit(0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// audit pack | audit verify
+//   knosky audit pack  [--root path] [--out dir]
+//   knosky audit verify <bundleDir>
+// ---------------------------------------------------------------------------
+if (subcommand === 'audit') {
+  const { packAuditBundle, verifyAuditBundle, formatVerifyHuman } = await import('../core/audit-bundle.mjs');
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
+    return undefined;
+  };
+  const action = argv.find((a, i) => i > 0 && !a.startsWith('--') && a !== 'audit') || 'pack';
+  if (action === 'pack') {
+    const root = path.resolve(getArgVal('--root') || '.');
+    const out = getArgVal('--out');
+    const pack = packAuditBundle({ root, outDir: out, mode: getArgVal('--mode') });
+    console.log(JSON.stringify(pack, null, 2));
+    process.exit(pack.ok ? 0 : 1);
+  }
+  if (action === 'verify') {
+    const bundle = argv.find((a, i) => i > 0 && !a.startsWith('--') && a !== 'audit' && a !== 'verify') || getArgVal('--bundle');
+    if (!bundle) {
+      console.error('Usage: knosky audit verify <bundleDir>');
+      process.exit(2);
+    }
+    const result = verifyAuditBundle(bundle);
+    if (flags.has('--json')) console.log(JSON.stringify(result, null, 2));
+    else for (const line of formatVerifyHuman(result)) console.log(line);
+    process.exit(result.ok ? 0 : 1);
+  }
+  console.error('KnoSky audit: unknown action "' + action + '". Try: knosky audit pack | knosky audit verify <dir>');
+  process.exit(2);
+}
+
+
+// ---------------------------------------------------------------------------
+// adversarial | gauntlet — private multi-model synthetic gauntlet (DEC-119 Phase 2)
+//   knosky adversarial run [--out dir] [--only id1,id2] [--llm]
+//   knosky adversarial list
+//   knosky gauntlet ...  (alias)
+// ---------------------------------------------------------------------------
+if (subcommand === 'adversarial' || subcommand === 'gauntlet') {
+  const {
+    runGauntlet,
+    listScenarios,
+    formatGauntletMarkdown,
+  } = await import('../core/adversarial-gauntlet.mjs');
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
+    return undefined;
+  };
+  const action = argv.find((a, i) => i > 0 && !a.startsWith('--') && a !== 'adversarial' && a !== 'gauntlet') || 'run';
+  if (action === 'list') {
+    console.log(JSON.stringify({ scenarios: listScenarios() }, null, 2));
+    process.exit(0);
+  }
+  if (action === 'run') {
+    const onlyRaw = getArgVal('--only');
+    const only = onlyRaw ? onlyRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+    const outDir = getArgVal('--out');
+    const llm = flags.has('--llm');
+    const rollup = await runGauntlet({ outDir, only, llm });
+    if (flags.has('--json')) {
+      console.log(JSON.stringify(rollup, null, 2));
+    } else {
+      console.log(formatGauntletMarkdown(rollup));
+      console.log('');
+      console.log('Artifacts: ' + rollup.outDir);
+      console.log(rollup.green ? 'PRIVATE GREEN' : 'NOT GREEN — fix before attack-tested claims');
+    }
+    process.exit(rollup.green ? 0 : 1);
+  }
+  console.error('KnoSky adversarial: try  knosky adversarial list | knosky adversarial run [--only id] [--llm] [--out dir]');
+  process.exit(2);
+}
+
+
+// ---------------------------------------------------------------------------
+// intel — architecture intelligence (ENT Phase 3)
+//   knosky intel [path] [--prior file] [--json]
+// ---------------------------------------------------------------------------
+if (subcommand === 'intel') {
+  const { runArchitectureIntel, formatArchitectureIntelMarkdown } = await import('../core/architecture-intel.mjs');
+  const getArgVal = (name) => {
+    const prefix = name + '=';
+    const eq = argv.find(a => a.startsWith(prefix));
+    if (eq !== undefined) return eq.slice(prefix.length);
+    const idx = argv.indexOf(name);
+    if (idx !== -1 && idx + 1 < argv.length && !argv[idx + 1].startsWith('--')) return argv[idx + 1];
+    return undefined;
+  };
+  const pos = argv.filter(a => !a.startsWith('--') && a !== 'intel');
+  const root = path.resolve(pos[0] || '.');
+  const out = runArchitectureIntel({
+    root,
+    cityPath: getArgVal('--city'),
+    priorPath: getArgVal('--prior'),
+    mode: getArgVal('--mode') || 'enterprise',
+  });
+  if (!out.ok) {
+    console.error(JSON.stringify(out, null, 2));
+    process.exit(1);
+  }
+  if (flags.has('--json')) {
+    console.log(JSON.stringify(out.report, null, 2));
+  } else {
+    console.log(formatArchitectureIntelMarkdown(out.report));
+    console.log('');
+    console.log('Wrote: ' + out.mdPath);
+    console.log('       ' + out.jsonPath);
+    console.log(out.prior_used ? 'Drift: prior snapshot compared' : 'Drift: no usable prior yet (next run will baseline)');
+  }
+  process.exit(0);
+}
+
 // ---------------------------------------------------------------------------
 // swarm subcommand: L3 operator heatmap / status (DEC-113 thin floor)
 //   knosky swarm status [--domain <path>]

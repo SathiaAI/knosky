@@ -11,6 +11,7 @@ import { resolveDomainRoot, loadDomain } from './domain-store.mjs';
 import { closedSet, CODES } from './decision-codes.mjs';
 import { verifyAuditChain } from './audit-writer.mjs';
 import { DEFAULT_SWARM_QUOTAS, swarmPaths, readSwarmHeatmap } from './swarm-coordinator.mjs';
+import { resolveRunMode, isEnterpriseMode, capabilityMatrix } from './enterprise-mode.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -284,6 +285,66 @@ export function buildDoctorScorecard(opts = {}) {
     rows.push(mark('warn', 'L3', 'Swarm coordinator', String(e.message || e)));
   }
 
+  // --- Enterprise / Regulated profile (DEC-118) ---
+  {
+    const mode = resolveRunMode({ envMode: process.env.KC_MODE });
+    const cfgCandidates = [join(domainRoot, 'config.yml'), join(domainRoot, '.knosky', 'config.yml')];
+    let cfgMode = null;
+    let cfgPath = null;
+    try {
+      for (const c of cfgCandidates) {
+        if (existsSync(c)) { cfgPath = c; break; }
+      }
+      if (cfgPath) {
+        const txt = readFileSync(cfgPath, 'utf8');
+        const m = txt.match(/^mode:\s*(\w+)/m);
+        if (m) cfgMode = m[1];
+      }
+    } catch { /* ignore */ }
+    const effective = cfgMode || mode;
+    if (isEnterpriseMode(effective) || isEnterpriseMode(mode)) {
+      rows.push(
+        mark(
+          'ok',
+          'ENT-MODE',
+          'Enterprise / Regulated mode',
+          `Profile active (mode=${effective}). Safer defaults: share-safe, fail-closed secrets, RO map honesty, security report path.`,
+        ),
+      );
+      const secReport = [join(domainRoot, 'security-report.json'), join(domainRoot, '.knosky', 'security-report.json')].find((p) => existsSync(p));
+      if (secReport) {
+        rows.push(mark('ok', 'ENT-SEC', 'Security report', `Present at ${secReport}`));
+      } else {
+        rows.push(
+          mark(
+            'warn',
+            'ENT-SEC',
+            'Security report',
+            'No security-report.json yet. Run: knosky enterprise . --no-serve  (or regulated)',
+          ),
+        );
+      }
+      const matrix = capabilityMatrix();
+      rows.push(
+        mark(
+          'info',
+          'ENT-RO',
+          'Map tools read-only guarantee',
+          `Allowed: ${matrix.map_tools_read_only.allowed.join(', ')}. Mode B is separate: ${matrix.mode_b_governed.tools.join(', ')}.`,
+        ),
+      );
+    } else {
+      rows.push(
+        mark(
+          'info',
+          'ENT-MODE',
+          'Enterprise / Regulated mode',
+          'Not active (casual). Enable with: knosky enterprise .   Claims for regulated pilots should use enterprise profile.',
+        ),
+      );
+    }
+  }
+
   // --- Telemetry constitution ---
   rows.push(
     mark(
@@ -335,7 +396,7 @@ export function buildDoctorScorecard(opts = {}) {
 export function doctorScorecardLines(opts = {}) {
   const card = buildDoctorScorecard(opts);
   const lines = [];
-  lines.push('KnoSky doctor — Wave 1 scorecard (Mode B · ladder · L3 foundation · sandbox)');
+  lines.push('KnoSky doctor — scorecard (Mode B · Enterprise · ladder · L3 foundation · sandbox)');
   lines.push('');
   lines.push(
     `Summary: ${card.summary.ok} ok · ${card.summary.warn} warn · ${card.summary.fail} fail · ${card.summary.info} info`,
@@ -360,6 +421,8 @@ export function doctorScorecardLines(opts = {}) {
   lines.push('  knosky swarm status                    # L3 heatmap snapshot');
   lines.push('  KC_PROFILE=coding|advisory|security    # MCP profile');
   lines.push('  Claims: never call Mode A “authorized”; never claim Windows no-egress if scorecard warns.');
+  lines.push('  knosky enterprise . --no-serve           # Enterprise Mode + security report');
+  lines.push('  knosky audit pack | audit verify <dir>   # portable audit bundle');
   return lines;
 }
 

@@ -1,246 +1,295 @@
-<p align="center">
-  <img src="docs/media/knosky-lockup-cream.png" alt="KnoSky" width="420" />
-</p>
+<div align="center">
+
+<img src="docs/media/knosky-lockup-cream.png" alt="KnoSky" width="440" />
 
 # KnoSky
 
-**GPS for AI agents** — map any local repo/docs folder, route assistants to the right files, optional Mode B allow/deny receipts. City view is the human skin. Runs on your machine. Free.
+### GPS for AI agents — local map, cited routes, optional receipts
 
-> *Born from building [Sathia](https://sathia.ai).*
+**Stop paying for thrash. Stop uploading the estate. Prove what the map of your repo did.**
 
-npm: **`knosky@0.7.0`** (`npx knosky@latest`) · Sites (docs only — **not** runtime egress): [knosky.com](https://knosky.com) · [knosky.wiki](https://knosky.wiki)
+[![Website](https://img.shields.io/badge/Website-knosky.com-FF5A3C?labelColor=2C2420)](https://www.knosky.com)
+[![Docs](https://img.shields.io/badge/Docs-knosky.wiki-1FA97A?labelColor=2C2420)](https://knosky.wiki)
+[![npm](https://img.shields.io/npm/v/knosky?color=CB3837&label=npm%20knosky)](https://www.npmjs.com/package/knosky)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-339933?labelColor=2C2420)](https://nodejs.org)
+[![License](https://img.shields.io/badge/License-FSL--1.1--MIT-yellow?labelColor=2C2420)](./LICENSE.md)
 
-<p align="center">
-  <img src="docs/media/hero-gps-infographic.jpg" alt="KnoSky GPS infographic — circular hub routes agents through identity, policy, and audit to the right files" width="920" />
-</p>
+**[Website ↗](https://www.knosky.com)** · **[Docs ↗](https://knosky.wiki)** · [Install](#60-second-start) · [Outcomes](#the-outcome) · [In the box](#whats-in-the-box) · [Enterprise path](#enterprise--regulated-path) · [Connect](#connect-an-assistant)
 
-<p align="center"><em>Same GPS hub shown on <a href="https://www.knosky.com/">knosky.com</a> — multi-agent routes around a single circular command hub (not a diamond).</em></p>
+Works with **Claude Code · Cursor · Codex · Hermes · VS Code** (and neighbors) via a shared MCP menu. One local install. Your code stays on the machine.
 
----
+<img src="docs/media/hero-gps-infographic.png" alt="KnoSky circular GPS hub — multi-agent mint routes vs coral thrash around one protocol" width="920" />
 
-> **Trust model (approved wording):** KnoSky's local trust model applies the core security principles of TUF — role separation, threshold signing, survivable key compromise, and freshness-guaranteed revocation — adapted from TUF's server-oriented update distribution to a fully local, no-egress agentic environment, with attestation formats based on in-toto/DSSE.
+<em>Product GPS hub (circular — never a diamond). City view is the human skin, not the agent metaphor.</em>
 
-## See it in 10 seconds
+</div>
 
-Open **[`demo/knosky-demo.html`](./demo/knosky-demo.html)** in your browser (double-click — self-contained). Sample project as a city. Then point KnoSky at yours.
+<details>
+<summary><b>Table of contents</b></summary>
+
+- [The problem](#the-problem)
+- [The solution](#the-solution)
+- [The outcome](#the-outcome)
+- [60-second start](#60-second-start)
+- [What's in the box](#whats-in-the-box)
+- [Enterprise / Regulated path](#enterprise--regulated-path)
+- [Connect an assistant](#connect-an-assistant)
+- [Guarantee ladder & honesty](#guarantee-ladder--honesty)
+- [CLI cheat sheet](#cli-cheat-sheet)
+- [What it is not](#what-it-is-not)
+- [Privacy & safety](#privacy--safety)
+- [License](#license--credits)
+
+</details>
 
 ---
 
 ## The problem
 
-Projects outgrow human memory of “which file.” Agentic tools make thrash expensive — tokens, tool calls, late answers. A file tree lists names; it does not give assistants a **shared map and route**.
+AI coding tools are expensive when they **guess**.
 
-## What you get
+| Waste you already feel | Why it hurts |
+| :--- | :--- |
+| **Wrong files, long loops** | Tokens and tool calls burn while agents wander monorepos |
+| **Meetings that ocean-chart the codebase** | Senior time spent “where does X live?” instead of shipping |
+| **Answers nobody can verify** | Hallucinated paths — no citation trail |
+| **Cloud “repo brain” that wants a copy** | Security kills the POC; data residency and exfil risk |
+| **Pretty demo, no re-runnable proof** | CISO can’t replay what was indexed, shared, or refused |
 
-> **Measured (SAT-439, 5 tasks, naive agent vs KnoSky-guided):**
-> **68% fewer tokens · 70% fewer tool calls · 6× faster to the right file**
-> *(Guided: correct 5/5. Naive: found target 3/5, correct 0/5.)*
-
-- **See the shape of the work** — districts and buildings over a raw tree (human skin).
-- **Route agents to the right node** — MCP map + optional governed route.
-- **Local-first** — default path does not upload your source; $0 to keep the map fresh.
-- **Honest ceilings** — never claim higher than `knosky doctor` on *this* install.
-
-**Not** a code-intelligence product, IDE, or cloud body-store. Complementary GPS layer.
-
-## Who it's for
-
-Builders shipping with Claude / Cursor / Codex / Hermes who want less thrash — and leads who want one navigation + optional permission story across tools.
+Industry keeps scoring the **token bill** of agentic workflows. KnoSky attacks a different layer: **navigation waste** — agents without a shared local map. Complementary to code intelligence and IDEs, not a replacement.
 
 ---
 
-## Quickstart
+## The solution
+
+**KnoSky is local-first agent GPS** for repos and docs:
+
+1. **Map** the folder on **your machine** (no cloud body store).  
+2. **Route** assistants through one frozen MCP menu (search, node, provenance, optional allow/deny).  
+3. **Cite** so answers link to something real.  
+4. Optionally flip **Enterprise / Regulated Mode** for security report, audit pack/verify, architecture hangboard, and a **private** synthetic attack gauntlet.
+
+> **Trust model (approved wording):** KnoSky's local trust model applies the core security principles of TUF — role separation, threshold signing, survivable key compromise, and freshness-guaranteed revocation — adapted from TUF's server-oriented update distribution to a fully local, no-egress agentic environment, with attestation formats based on in-toto/DSSE.
+
+---
+
+## The outcome
+
+### Efficiency you can point at
+
+From **our own** small guided-vs-wandering study (5 tasks — not someone else’s marketing deck):
+
+| Metric | Result |
+| :--- | ---: |
+| Tokens | **−68%** with guided map vs wandering |
+| Tool calls | **−70%** |
+| Time-to-right-file | **6× faster** |
+| Guided hit rate | **5 / 5** correct |
+| Wandering | Target sometimes found, **0 / 5** correct |
+
+*First-party evidence only. Industry write-ups measure other stacks — they amplify the problem, they are not KnoSky’s hero math.*
+
+### Risk averted (what a careful CTO / CISO cares about)
+
+| Risk without a local GPS layer | With KnoSky |
+| :--- | :--- |
+| Cloud tool insists on a **copy of source** | **Local-first** — default path does **not** upload your bodies as KnoSky product storage |
+| Assistants **write / run** under the best marketing smile | **Map tools are read-only** (search / get / provenance) — documented in [`docs/READ_ONLY_GUARANTEE.md`](./docs/READ_ONLY_GUARANTEE.md) |
+| Shared map dumps **secrets or laptop paths** | **Share-safe** indexing **fails closed** on secret-like values; absolute roots stripped |
+| “Trust us” with **no paper** | **Security report** + **`audit pack` / `audit verify`** a stranger can re-run |
+| Thin docs and unknown ownership until outage week | **`intel`** district scores — docs / ownership / tests / churn / drift / risk (local proxies) |
+| Private attack proof that never exists | **Private synthetic gauntlet** (8 classes) — stays **private** unless Owner explicitly publishes |
+
+### Cost & outcome in one line
+
+**Less thrash spend · less senior scavenger time · fewer dead AI POCs after Security · fewer “who owns this district?” workshops · same folder your agents already open.**
+
+| Without KnoSky | With it |
+| :--- | :--- |
+| Agent pays full tourist fare in the monorepo | Route toward the right node with a **shared map** |
+| Security review is a deck of hope | Re-runnable **doctor** + **security report** + **audit verify** |
+| Share a city HTML with crossed fingers | Fail-closed share-safe or **don’t ship the artifact** |
+| Swarm marketing language | **Doctor-honest ceilings** — L3 coordinator = **foundation**, not fleet-everywhere |
+
+---
+
+## 60-second start
 
 ```bash
 npx knosky@latest .
 ```
 
-Indexes the current folder, builds the city, prints MCP config + starter prompts, starts the local connector.  
-Flags: `--no-open`, `--no-serve`. Point elsewhere: `npx knosky@latest /path/to/repo`.
-
-Clone path:
-
-```bash
-git clone https://github.com/SathiaAI/knosky && cd knosky && npm install && node bin/knosky.mjs .
-```
-
-**Requirements:** [Node.js](https://nodejs.org) **20+** (`package.json` `engines.node` is `>=20`).
-
-After install:
+Indexes **this folder**, builds the city, prints MCP config + starter prompts, starts the local connector.
 
 ```bash
 npx knosky@latest doctor
 ```
 
----
+**Requirements:** [Node.js](https://nodejs.org) **20+**.
 
-## How it works
-
-### 1. Map (local index)
+Clone:
 
 ```bash
-node core/fs-indexer.mjs --root /path/to/your/repo --out city-data.json --share-safe
-node renderer/build-rich.mjs city-data.json city.html
+git clone https://github.com/SathiaAI/knosky
+cd knosky && npm install
+node bin/knosky.mjs .
 ```
 
-Or simply `npx knosky@latest .` (wraps map + city + connector).
+Flags: `--no-open`, `--no-serve`.
 
-Top-level folders → **districts**, files → **buildings**, links back to live source.  
-`--share-safe` strips absolute roots and **fails closed** on secret-like values.
+---
 
-### 2. Connect an assistant (MCP) — DEC-108 menu
+## What's in the box
 
-SSOT: [`ssot/tool-menu.json`](./ssot/tool-menu.json) · codes: [`ssot/decision-codes.json`](./ssot/decision-codes.json) · ladder: [`ssot/ladder-l0-l3.md`](./ssot/ladder-l0-l3.md).  
-Consumer packs: [`packs/`](./packs/) (Hermes · Claude Code · Cursor · Codex · P1 VS Code / Greptile recipe / GHA).
+| Piece | What you get |
+| :--- | :--- |
+| **Local maze map** | Indexer for correct folders on **your** disk |
+| **City HTML** | Human skin (isometric) for the same graph |
+| **MCP GPS tools** | Frozen menu: map lookup + optional governed route/bundle/policy |
+| **Mode A / Mode B** | Advisory tips **or** identity + policy + audit receipts |
+| **Packs** | Claude · Cursor · Codex · Hermes (+ VS Code / Greptile recipe / PR-GPS) |
+| **`doctor`** | Health + honesty for *this* install |
+| **Enterprise profile** | Named safer defaults, security report, capability matrix |
+| **`audit pack` / `verify`** | CISO-style portable evidence folder |
+| **`intel`** | Architecture hangboard per district |
+| **Private adversarial gauntlet** | Synthetic hosts · multi-role checks · rollup (**not public by default**) |
+| **L3 coordinator foundation** | Local multi-helper leases/claims/heatmap/bench — **not** cloud fleet product |
+| **PR-GPS Action** | Advisory PR comments — **never blocks** the build by default |
+
+**Not in the box:** coding model replacement · cloud vault of everyone’s source · “swarm-safe production factory everywhere” · SOC2 certificate pealed from a report file · automatic public attack-pack publish.
+
+---
+
+## Enterprise / Regulated path
+
+For pilots that need **proof**, not just a pretty city. Casual install still works — this is an **opt-in jacket**.
 
 ```bash
-cd mcp && npm install && cd ..
+# From clone (or package bin once these subcommands ship on your npm line)
+node bin/knosky.mjs enterprise . --no-open --no-serve
+node bin/knosky.mjs doctor
+node bin/knosky.mjs audit pack --root .
+node bin/knosky.mjs audit verify PASTE_BUNDLE_DIR_HERE
+node bin/knosky.mjs intel .
+```
+
+| Step | Saves / avoids |
+| :--- | :--- |
+| **Enterprise index** | Fail-closed secrets · stripped absolute paths · security summary |
+| **Doctor ENT rows** | Clear “profile active / report present / map RO vs Mode B” |
+| **Audit pack + verify** | Security re-checks **without** a vendor meeting |
+| **Intel** | Week-2 architect attention list without a slide workshop |
+| **`adversarial run`** | Private synthetic proof (secrets, ignores, traversal, injection, stale, …) |
+
+Private gauntlet (synthetic only — **never customer data**):
+
+```bash
+node bin/knosky.mjs adversarial list
+node bin/knosky.mjs adversarial run
+# optional live model reviewer: OPENROUTER_API_KEY or ANTHROPIC_API_KEY + KS_ADV_LLM=1 + --llm
+```
+
+Owner walkthroughs:  
+[`OWNER-DEMO-ENT-PHASE1.md`](./OWNER-DEMO-ENT-PHASE1.md) ·  
+[`OWNER-DEMO-ENT-PHASE2.md`](./OWNER-DEMO-ENT-PHASE2.md) ·  
+[`OWNER-DEMO-ENT-PHASE3.md`](./OWNER-DEMO-ENT-PHASE3.md)
+
+---
+
+## Connect an assistant
+
+SSOT menu: [`ssot/tool-menu.json`](./ssot/tool-menu.json) · codes · ladder under `ssot/`.  
+Packs: [`packs/`](./packs/).
+
+```bash
 claude mcp add knosky \
-  -e KC_CITY=/abs/path/city-data.json \
+  -e KC_CITY=/abs/path/.knosky/city-data.json \
   -e KC_PROFILE=coding \
   -- node /abs/path/mcp/server.mjs
 ```
 
-JSON shape (Cursor / Desktop / Codex — key name may be `mcpServers` or `mcp_servers`):
-
-```json
-"knosky": {
-  "command": "node",
-  "args": ["/abs/path/mcp/server.mjs"],
-  "env": {
-    "KC_CITY": "/abs/path/city-data.json",
-    "KC_PROFILE": "coding"
-  }
-}
-```
-
-| Profile (`KC_PROFILE`) | For | Tools |
-| :--- | :--- | :--- |
-| **coding** (default packs) | Day-to-day agents | Tier 0 map + Tier 1 governed |
-| **security** | Operators / verify | Coding + `kc_audit_query` / `kc_audit_verify` |
-| **advisory** | Explicit non-authorizing explore | Map + labeled Mode A `kc_route` |
-
-**Mode A vs Mode B**
-
-| Mode | On the wire | Meaning |
-| :--- | :--- | :--- |
-| **A** | `ADVISORY_UNAUTH` | Tips only — not policy-certified, not swarm-safe |
-| **B** | `ALLOW` / `DENY_*` (+ receipt on ALLOW) | Identity + policy + audit before authorized claims |
-
-Default coding profile uses **Mode B** for governed tools. Mode A stays labeled.
-
-**Tool menu (freeze)**
-
-| Tier | Tools | Authorizing? |
-| :--- | :--- | :---: |
-| **0 map** | `kc_search`, `kc_get_node`, `kc_list_categories`, `kc_get_provenance`, `kc_related` | No |
-| **1 governed** | `kc_route` (dual-mode), `kc_bundle`, `kc_policy_check` | Yes on Mode B `ALLOW` |
-| **Security only** | `kc_audit_query`, `kc_audit_verify` | Audit — not on coding packs |
-
-**Mode B lease (governed calls):**
-
-```bash
-# From any folder after installing / using the package bin:
-npx knosky@latest agent-register --domain .knosky --agent my-agent --role coder
-
-# Clone-only equivalent:
-# node bin/knosky.mjs agent-register --domain .knosky --agent my-agent --role coder
-```
-
-Pass **`leaseId`** into `kc_route` / `kc_policy_check` / `kc_bundle`. Payload `agentId` alone is not identity.
-
-Closed decision codes:  
-`ALLOW` · `DENY` · `DENY_IDENTITY` · `DENY_POLICY` · `DENY_AUDIT` · `DENY_FRESHNESS` · `DENY_EVIDENCE` · `ERROR_INVALID_INPUT` · `ERROR_INDEX` · `ADVISORY_UNAUTH`
-
-### 3. Guarantee ladder (never over-claim)
-
-| L | Name | Promise |
-| :---: | :--- | :--- |
-| **L0** | Local map | Index + navigate locally; no KnoSky upload by default |
-| **L1** | Share-safe | Fail-closed secret controls before share artifacts |
-| **L2** | Governed evaluator | Mode B identity + policy + audit (or safe DENY) |
-| **L3** | Swarm domain | Multi-agent **coordinator** on Mode B (below) |
-
-### 4. L3 swarm coordinator — what works (Wave 1 foundation)
-
-Implemented in-process + CLI on the **local trust domain** (not a multi-tenant cloud swarm product).
-
-**Evidence meaning:** rows below = APIs in `core/swarm-coordinator.mjs` + unit tests (`test/swarm-coordinator.test.mjs`, Mode B / operator-auth) + local ad-hoc matrix / `knosky swarm bench`. This is **foundation proof**, not a production multi-tenant fleet claim.
-
-| Capability | Status |
+| Profile | Used for |
 | :--- | :--- |
-| Distinct agent identities + leases | **Implemented** — issue / list / bind via domain store |
-| Lease expire / revoke auth model | **Implemented** — see honesty note below |
-| File + district **traffic claims** (not VCS locks) | **Implemented** |
-| Claim conflict DENY + FIFO wait position | **Implemented** (fairness) |
-| Quotas + backpressure (`maxClaimsPerAgent`, action windows) | **Implemented** |
-| Claim **requires `leaseId`** | **Implemented** |
-| Multi-agent audit receipts (`meta.swarm`, hash chain) | **Implemented** |
-| Anti-probe on rapid DENY floods | **Implemented** |
-| Heatmap snapshot + `knosky swarm status` | **Implemented** (CLI ops skin, not a full GUI console) |
-| `knosky swarm bench` | **Implemented** (conflict + quota measure) |
-| Mode B composition | **Implemented** — dual-operator **quorum** required to **register elevated classes**; L2 path underneath L3 |
+| **coding** (default) | Map + governed tools |
+| **security** | + audit query/verify |
+| **advisory** | Explicit non-authorizing explore |
 
-**Lease revoke / expire honesty (security-critical):**
+**Mode A** = labeled advisory only. **Mode B** = `ALLOW` / `DENY_*` with lease + policy + audit before *authorized* claims.  
+Mint a lease: `npx knosky@latest agent-register --domain .knosky --agent my-agent`.
 
-| Who | Can expire/revoke a lease? | Quorum? |
-| :--- | :--- | :--- |
-| **Holder** (`callerAgentId` matches lease agent) | Yes — self only | N/A (self) |
-| **Any third-party agent** | **No** — `operator_or_holder_required` | — |
-| **Operator** (`operatorToken` / `KC_OPERATOR_TOKEN`) | Yes — single valid operator token | **No dual threshold today** |
-| **Elevated class registration** (separate path) | Needs **two** distinct operators | **Yes** (`assertOperatorQuorum`) |
-
-Wave 1 does **not** claim multi-party quorum for operator lease revoke. A single authentic operator (or the holder) can change that lease. Treat operator token custody as security-critical until a future DEC adds revoke quorum if product wants it. Documented accepted risk: [SECURITY.md](./SECURITY.md) (Mode B operator lease revoke).
-
-**Public claim rules for L3**
-
-- You **may** say: local swarm **coordinator foundation**, lease-governed multi-agent routing, heatmap/status/bench tools exist.
-- You **must not** say: production “**swarm-safe fleet** at every install,” multi-tenant cloud isolation, operator revoke is dual-control by default, or L3 ready without `knosky doctor` ceiling on *that* domain.
-- Doctor marks L3 modules as **FOUNDATION present** and keeps ladder guidance as **info** — not a green “ship swarm everywhere” badge.
-- Site URLs in this README are **documentation links only**. Default CLI/MCP paths do **not** call out to knosky.com / knosky.wiki.
-
-```bash
-npx knosky@latest swarm status --domain .knosky
-# Always use a throwaway domain for bench — never your live project .knosky:
-npx knosky@latest swarm bench --domain /tmp/knosky-swarm-bench
-npx knosky@latest doctor
-```
-
-Windows: network lockdown is **unsupported/inactive** at runtime for this CLI until packaging proves otherwise — see [LIMITATIONS.md](./LIMITATIONS.md).
-
-### 5. PR navigation comments (GitHub Action — PR-GPS)
-
-Advisory neighbor only — the action **never blocks** or gates the build by default:
-
-```yaml
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
-- uses: SathiaAI/knosky@v0.5.0   # pin newer tag when you cut GitHub Action releases
-  with:
-    base: ${{ github.event.pull_request.base.sha }}
-    head: ${{ github.event.pull_request.head.sha }}
-```
+**Map tools (read-only):** `kc_search` · `kc_get_node` · `kc_list_categories` · `kc_get_provenance` · `kc_related`  
+**Governed:** `kc_route` · `kc_bundle` · `kc_policy_check`  
+Details: [`docs/READ_ONLY_GUARANTEE.md`](./docs/READ_ONLY_GUARANTEE.md)
 
 ---
 
-## What it is **not** (on purpose)
+## Guarantee ladder & honesty
 
-- **Not code intelligence / an IDE** — map + route + optional receipts; deep Q&A stays with coding agents.
-- **Not a cloud vault of your source** — local trust domain (DEC-109).
-- **Not a body store** — pointers and short projections; live files stay source of truth (DEC-107).
-- **Not “zero data risk”** or blanket swarm-safe — see privacy + doctor ceilings.
+| L | Name | Promise |
+| :---: | :--- | :--- |
+| **L0** | Local map | Navigate locally — no KnoSky source upload by default |
+| **L1** | Share-safe | Fail-closed secret controls before share artifacts |
+| **L2** | Governed evaluator | Mode B identity + policy + audit (or safe DENY) |
+| **L3** | Multi-helper domain | **Coordinator foundation** on the local domain — not multi-tenant fleet SaaS |
+
+```bash
+npx knosky@latest doctor
+npx knosky@latest swarm status --domain .knosky
+# bench only on a throwaway domain — never your live .knosky
+npx knosky@latest swarm bench --domain /tmp/knosky-swarm-bench
+```
+
+**You may say:** local GPS, cited map tools, optional Mode B receipts, enterprise security report/audit pack, private synthetic gauntlet, architecture hangboard, L3 **foundation**.  
+**You must not say:** production swarm-safe fleet everywhere · dual-control operator lease revoke by default · “no egress guaranteed on Windows” without packaging proof · public attack-tested as marketing without Owner publish seek · SOC2 from a JSON report alone.
+
+**Lease revoke (accepted Wave-1 risk):** holder **or** a **single** valid operator token — **not** dual quorum on revoke. Dual quorum applies to **elevated registration**. See [SECURITY.md](./SECURITY.md).
+
+**Windows:** runtime network lockdown is not kernel-enforced for this CLI — [LIMITATIONS.md](./LIMITATIONS.md).
+
+---
+
+## CLI cheat sheet
+
+| Command | Job |
+| :--- | :--- |
+| `npx knosky@latest .` | Map + city + connector |
+| `… doctor` | Honesty scorecard |
+| `node bin/knosky.mjs enterprise . --no-serve` | Enterprise profile + security report |
+| `… audit pack` / `audit verify` | Evidence bundle |
+| `… intel .` | Architecture intelligence |
+| `… adversarial list\|run` | Private synthetic gauntlet |
+| `… agent-register` | Mode B lease |
+| `… swarm status\|bench` | L3 foundation ops |
+
+---
+
+## What it is not
+
+- Not an IDE or full code-intelligence product  
+- Not a multi-tenant cloud vault of source  
+- Not an autonomous “run the business” agent  
+- Not “zero residual risk” or finished multi-helper factory  
+- Not auto-public attack marketing after a private green  
 
 ## Privacy & safety
 
-- Local by default; indexing skips `.git`, `node_modules`, secrets-ish paths, ignore files.
-- Scrubs common secret/PII patterns; `--share-safe` fails closed on hits.
-- Generated cities embed data as inert JSON and escape names.
+- Local by default; skips common secret-ish paths and ignore rules  
+- Scrub + fail-closed share-safe  
 
-More: [PRIVACY.md](./PRIVACY.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [SECURITY.md](./SECURITY.md) · [CHANGELOG.md](./CHANGELOG.md) · [knosky.wiki](https://knosky.wiki/) · [compare](./wiki/comparison.md)
+More: [PRIVACY.md](./PRIVACY.md) · [SECURITY.md](./SECURITY.md) · [LIMITATIONS.md](./LIMITATIONS.md) · [CHANGELOG.md](./CHANGELOG.md)
 
 ## License & credits
 
-**[Functional Source License (FSL-1.1-MIT)](./LICENSE.md)** — free to use; no competing hosted repackage; converts to MIT two years after each release. “KnoSky” trademark of the author.
+**[FSL-1.1-MIT](./LICENSE.md)** — free to use; no competing hosted side-sell; converts toward MIT on schedule. “KnoSky” trademark of the author.
 
 City art: **[Kenney](https://kenney.nl)** (CC0) — [CREDITS.md](./CREDITS.md).
+
+---
+
+<div align="center">
+
+**Map locally. Cite answers. Prove the ceiling.**
+
+[knosky.com](https://www.knosky.com) · [knosky.wiki](https://knosky.wiki) · [npm knosky](https://www.npmjs.com/package/knosky)
+
+</div>

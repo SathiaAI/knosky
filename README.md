@@ -165,12 +165,12 @@ Flags: `--no-open`, `--no-serve`.
 For pilots that need **proof**, not just a pretty city. Casual install still works — this is an **opt-in jacket**.
 
 ```bash
-# From clone (or package bin once these subcommands ship on your npm line)
-node bin/knosky.mjs enterprise . --no-open --no-serve
-node bin/knosky.mjs doctor
-node bin/knosky.mjs audit pack --root .
-node bin/knosky.mjs audit verify PASTE_BUNDLE_DIR_HERE
-node bin/knosky.mjs intel .
+# Live on npm — no clone needed
+npx knosky@latest enterprise . --no-open --no-serve
+npx knosky@latest doctor
+npx knosky@latest audit pack --root .
+npx knosky@latest audit verify PASTE_BUNDLE_DIR_HERE
+npx knosky@latest intel .
 ```
 
 | Step | Saves / avoids |
@@ -184,8 +184,8 @@ node bin/knosky.mjs intel .
 Private gauntlet (synthetic only — **never customer data**):
 
 ```bash
-node bin/knosky.mjs adversarial list
-node bin/knosky.mjs adversarial run
+npx knosky@latest adversarial list
+npx knosky@latest adversarial run
 # optional live model reviewer: OPENROUTER_API_KEY or ANTHROPIC_API_KEY + KS_ADV_LLM=1 + --llm
 ```
 
@@ -253,13 +253,13 @@ npx knosky@latest swarm bench --domain /tmp/knosky-swarm-bench
 | Command | Job |
 | :--- | :--- |
 | `npx knosky@latest .` | Map + city + connector |
-| `… doctor` | Honesty scorecard |
-| `node bin/knosky.mjs enterprise . --no-serve` | Enterprise profile + security report |
-| `… audit pack` / `audit verify` | Evidence bundle |
-| `… intel .` | Architecture intelligence |
-| `… adversarial list\|run` | Private synthetic gauntlet |
-| `… agent-register` | Mode B lease |
-| `… swarm status\|bench` | L3 foundation ops |
+| `npx knosky@latest doctor` | Honesty scorecard |
+| `npx knosky@latest enterprise . --no-serve` | Enterprise profile + security report |
+| `npx knosky@latest audit pack` / `audit verify` | Evidence bundle |
+| `npx knosky@latest intel .` | Architecture intelligence |
+| `npx knosky@latest adversarial list\|run` | Private synthetic gauntlet |
+| `npx knosky@latest agent-register` | Mode B lease |
+| `npx knosky@latest swarm status\|bench` | L3 foundation ops |
 
 ---
 

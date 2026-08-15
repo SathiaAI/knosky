@@ -61,7 +61,7 @@ export function shouldEscalateToPaul({ criticals = [], failed = [], total = 0 } 
     escalate,
     reasons,
     paulMessage: escalate
-      ? 'Merge blocked until CRITICAL items are resolved or dismissed by Paul.'
+      ? 'Merge blocked until CRITICAL items are resolved or dismissed by Paul. CRITICAL findings must be verified against the actual code (not just this diff) before being treated as blocking -- reviewers can misread signatures/context they cannot fully see (root-caused on knothread PR #14/#16, 2026-08-15).'
       : '',
     canAutoPublish,
   };

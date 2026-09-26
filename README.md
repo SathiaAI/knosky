@@ -4,7 +4,7 @@
 
 # KnoSky
 
-### GPS for AI agents — local map, cited routes, optional receipts
+**KnoSky turns any repo or folder into an explorable city and grounds your AI in your own source.**
 
 **Stop paying for thrash. Stop uploading the estate. Prove what the map of your repo did.**
 
@@ -293,3 +293,7 @@ City art: **[Kenney](https://kenney.nl)** (CC0) — [CREDITS.md](./CREDITS.md).
 [knosky.com](https://www.knosky.com) · [knosky.wiki](https://knosky.wiki) · [npm knosky](https://www.npmjs.com/package/knosky)
 
 </div>
+
+---
+
+KnoSky is built and run by [Viaknox](https://viaknox.com/products).

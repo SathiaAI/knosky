@@ -42,10 +42,15 @@ runs:
 
     - name: Build the KnoSky index (best-effort — never fails the build)
       shell: bash
+      # Values reach the script as environment variables, never spliced into it,
+      # so an input containing quotes or $(...) can't run as shell code.
+      env:
+        KC_ACTION_PATH: ${{ github.action_path }}
+        KC_ROOT: ${{ inputs.root }}
       run: |
-        node "${{ github.action_path }}/core/fs-indexer.mjs" \
-          --root "${{ inputs.root }}" \
-          --out "${{ inputs.root }}/.knosky-ci-city.json" \
+        node "$KC_ACTION_PATH/core/fs-indexer.mjs" \
+          --root "$KC_ROOT" \
+          --out "$KC_ROOT/.knosky-ci-city.json" \
           --share-safe || true
 
     - name: Run KnoSky PR-GPS and post/update the PR comment
@@ -59,4 +64,5 @@ runs:
         KC_ROOT: ${{ inputs.root }}
         KC_CITY: ${{ inputs.root }}/.knosky-ci-city.json
         KC_FAIL_ON_SECRET: ${{ inputs.fail-on-secret }}
-      run: node "${{ github.action_path }}/action/post-comment.mjs"
+        KC_ACTION_PATH: ${{ github.action_path }}
+      run: node "$KC_ACTION_PATH/action/post-comment.mjs"
